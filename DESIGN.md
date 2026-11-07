@@ -4533,4 +4533,8 @@ zuige：「一句话待办最后可以加上标签，用逗号或空格隔开，
 
 - `:app:testDebugUnitTest` 通过（含新增 `TagRulesTest` 与 Parser 标签用例）；`:app:assembleRelease` 通过，KSP 生成 `8.json`、R8 全开正常。
 - **真机装机未做**：adb 枚举设备为空（重启服务仍无设备），release 包已出但没装到 vivo 上。连上设备后需覆盖安装（会真实跑 v7→v8 迁移）、看冷启动有无 Room 异常，再验标签 chip / 徽章 / 编辑态 / 无日期 / 重复顺延 / 备份恢复。
-- 按 AGENTS §5，本轮是**日常功能改动，版本号不动、不发版**，不碰 Release / Hexo / 博客文章。功能需同时落到 `release/vivo-store`。
+- 按 AGENTS §5，本轮是**日常功能改动，版本号不动、不发版**，不碰 Release / Hexo / 博客文章。
+- 双分支已落地：main `ffb9095`（功能）+ `3bf9d1d`（AGENTS 分叉说明），合规分支 `f8de959`（适配版）。
+  ★ 搬运时撞 8 处冲突，根因是合规分支基线落后 25 个提交、缺 `backup/` / `update/` / `AGENTS.md` /
+  instrumented 迁移测试；逐项取舍记在合规分支 `DESIGN.md §58.2`，`AGENTS.md §4` 也补了对应提醒。
+  两边 `:app:testDebugUnitTest` 与 `:app:assembleRelease` 均通过。
