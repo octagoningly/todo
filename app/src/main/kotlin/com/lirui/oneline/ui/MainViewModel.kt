@@ -54,10 +54,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     /**
-     * 编辑态也走这里（§59）：`Format.editSentence` 会把标签一并回填成 `#tag`，
+     * 编辑态也走这里（§60）：`Format.editSentence` 会把标签一并回填成「标签xxx」，
      * 同一套 Parser 就能原样读回标题 / 详情 / 标签 —— §58 的 `parseForEdit` 锚定补丁
-     * 已删除。改成显式 `#` 之前，末尾段被当标签吃掉再钉回库值，用户在编辑框里
-     * 新打的字会静默消失。
+     * 已删除。§58 把末尾段当标签吃掉再钉回库值，用户在编辑框里新打的字会静默消失。
      */
     fun parse(text: String) {
         val all = parser.parseAll(text)

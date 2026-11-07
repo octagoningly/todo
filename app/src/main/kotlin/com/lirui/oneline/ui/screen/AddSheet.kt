@@ -119,7 +119,7 @@ fun AddSheet(
     var titleOverrides by remember { mutableStateOf(mapOf<Int, String>()) }
     var detailOverrides by remember { mutableStateOf(mapOf<Int, String?>()) }
     // v1.0.15 标签覆盖：与 title/detail 同口径 —— 键存在即「用户手动改过」，值为 null 表示清空。
-    // 编辑态与添加态共用同一套 parse（editSentence 会回填 #tag），打字不会洗掉库里的标签。
+    // 编辑态与添加态共用同一套 parse（editSentence 回填「标签xxx」），打字不会洗掉库里的标签。
     var tagOverrides by remember { mutableStateOf(mapOf<Int, String?>()) }
     var pickingIndex by remember { mutableIntStateOf(-1) }
     var showDatePicker by remember { mutableStateOf(false) }
@@ -623,7 +623,7 @@ fun AddSheet(
             )
         }
 
-        // ── 标签编辑（v1.0.15 / §59）──
+        // ── 标签编辑（v1.0.15 / §60）──
         // 一条待办一个标签；留空 = 清掉标签（override 记 null，不能退回解析值）。
         if (showTagEditor && pickingIndex in parses.indices) {
             val current = if (tagOverrides.containsKey(pickingIndex)) {
@@ -632,10 +632,12 @@ fun AddSheet(
                 parses[pickingIndex].tag.orEmpty()
             }
             var draft by remember(pickingIndex) { mutableStateOf(current) }
-            // 输入时就把「会被 normalize 收敛掉的部分」提示出来，别等保存后才发现
-            // 「课外 作业」变成了「课外」、超长被截成 8 字。用 M3 自带 supportingText。
-            val rawTag = draft.trimStart('#').trim()
-            val willTrim = rawTag.isNotEmpty() && TagRules.normalize(draft) != rawTag
+            // 输入时就把「会被 normalize 收敛掉的部分」提示出来（多词、超长、前后空格 / #），
+            // 别等保存后才发现被截。用 M3 自带 supportingText。
+            // ★ chip 里直接输标签值，不认句子里的「标签」标记词（值本身可以叫「标签纸」）。
+            val rawTag = draft.trim()
+            val normalizedTag = TagRules.normalize(draft)
+            val willTrim = rawTag.isNotEmpty() && normalizedTag != rawTag
             AlertDialog(
                 onDismissRequest = { showTagEditor = false },
                 title = { Text("编辑标签") },
@@ -645,15 +647,13 @@ fun AddSheet(
                         onValueChange = { draft = it },
                         singleLine = true,
                         label = { Text("标签") },
-                        placeholder = { Text("#作业") },
-                        isError = willTrim,
+                        placeholder = { Text("作业") },
                         supportingText = {
                             Text(
-                                if (willTrim) "只保留第一个词、最多 ${TagRules.MAX_LENGTH} 字，其余会被截掉"
-                                else "一条待办一个标签；最多 ${TagRules.MAX_LENGTH} 字，留空即不设标签",
+                                if (willTrim) "将保存为「$normalizedTag」；只保留第一个词、最多 ${TagRules.MAX_LENGTH} 字"
+                                else "一条待办一个标签；最多 ${TagRules.MAX_LENGTH} 字。句子里写「标签作业」也能带标签",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (willTrim) MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         },
                         modifier = Modifier.fillMaxWidth()
@@ -661,7 +661,7 @@ fun AddSheet(
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        // 规范化收敛到纯函数：抹掉 #、只取第一个词、按 code point 限长。
+                        // 规范化收敛到纯函数：抹掉边界符 / #、只取第一个词、按 code point 限长。
                         tagOverrides = tagOverrides +
                             (pickingIndex to TagRules.normalize(draft).ifBlank { null })
                         showTagEditor = false
@@ -854,7 +854,7 @@ private data class PreviewRow(
     val endTime: java.time.LocalTime?,
     val title: String,
     val detail: String?,
-    /** v1.0.15（§59）：显式 # 标签，null / 空白 = 无标签。 */
+    /** v1.0.15（§60）：语义标签，null / 空白 = 无标签。 */
     val tag: String?
 )
 

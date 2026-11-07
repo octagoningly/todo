@@ -815,7 +815,7 @@ private fun TodoAppContent(
                 }
             },
             onPreview = { t ->
-                // v1.0.15（§59）：editSentence 会回填 #tag，编辑态与添加态共用同一套 parse。
+                // v1.0.15（§60）：editSentence 会回填「标签xxx」，编辑态与添加态共用同一套 parse。
                 vm.parse(t)
             },
             parses = vm.lastParses,
@@ -3431,7 +3431,7 @@ private fun RepeatBadge(text: String) {
 }
 
 /**
- * v1.0.15（§59）显式 # 标签徽章。和 [RepeatBadge] 同形状、同字号，用 tertiaryContainer 区分
+ * v1.0.15（§60）语义标签徽章。和 [RepeatBadge] 同形状、同字号，用 tertiaryContainer 区分
  * 「重复计划」与「分类标签」；宽度封顶 80dp + 省略号，避免长标签把右侧日期挤没。
  */
 @Composable

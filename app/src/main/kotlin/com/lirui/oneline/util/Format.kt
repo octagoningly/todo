@@ -212,8 +212,8 @@ object Format {
      * [endAtMillis] 非空（#1 时间区间）时，时刻写成「15点到17点」而不是「15点」——
      * 否则一保存，结束点就丢了（区间退化成普通待办）。用 24 小时制裸数字，不拼「下午」：
      * 「下午3点到5点」与「15点到17点」解析结果一致，后者没有时段词歧义。
-     * - v1.0.15（§59）：[tag] 非空时写成 `#tag`（放在详情后、日期前），编辑态用同一套
-     *   Parser 就能把标题 / 详情 / 标签一起读回；没有 `#` 时句子与旧版逐字相同。
+     * - v1.0.15（§60）：[tag] 非空时写成「标签xxx」（放在详情后、日期前），编辑态用同一套
+     *   Parser 就能把标题 / 详情 / 标签一起读回；没有标签时句子与旧版逐字相同。
      */
     fun editSentence(
         title: String,
@@ -230,10 +230,12 @@ object Format {
             append(" ")
             append(detail)
         }
+        // normalize 只收敛分隔符 / 长度，不抹中文标记词（值本身可以叫「标签纸」）。
+        // 库里的 tag 已是规范化值，前面补一次 TAG_WORD 就能被同一套 Parser 读回。
         val normalizedTag = TagRules.normalize(tag)
         if (normalizedTag.isNotBlank()) {
             append(" ")
-            append(TagRules.MARK)
+            append(TagRules.TAG_WORD)
             append(normalizedTag)
         }
         if (due == null) return@buildString
