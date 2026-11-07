@@ -127,7 +127,8 @@
 - 从 main 往合规分支用 `git cherry-pick -n`，只搬功能 diff、**不整文件覆盖**；之后**逐行核对 Manifest**：`INTERNET` / `ACCESS_NETWORK_STATE` / `REQUEST_INSTALL_PACKAGES` / `FOREGROUND_SERVICE_DATA_SYNC` / FileProvider / `update/` / `UpdateDialog.kt` / 关于页检查更新行，一个都不能带过去。
 - 无冲突也要重新编译验证。合规分支 `PRIVACY_POLICY_VERSION` 只在政策实质变更时递增；涉及新数据存储 / 通知 / 权限时同步更新**那条分支的** `docs/PRIVACY.md`。
 - remote 用 SSH `git@github.com:zuige66/todo.git`（HTTPS 会 `Empty reply from server`）。
-- ★ 本文件**应**在两条分支保持一致（2026-11-07 先在 `main` 落地；下次切到合规分支时把 `AGENTS.md` 带过去，在那之前以 `main` 上的版本为准）。在某条分支上工作，以「本文件 + 上表」为准判断哪些改动属于越界。
+- ★ 本文件**应**在两条分支保持一致（2026-11-07 已在两条分支落地）。在某条分支上工作，以「本文件 + 上表」为准判断哪些改动属于越界。
+  ⚠ 合规分支的功能基线落后 `main` 较多（见该分支 `DESIGN.md §58.4`）：无 `backup/` / `update/` 模块、无 `ALL_MIGRATIONS` 与 instrumented 迁移测试。§2 的可复用模块清单里这些件在合规分支不存在，`cherry-pick -n` 撞到 modify/delete 冲突时按「本分支缺什么就别带什么」处理，不要顺手搬半个模块进来。
 
 ---
 
