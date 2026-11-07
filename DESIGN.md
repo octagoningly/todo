@@ -3447,6 +3447,11 @@ UI：预览 `FlowRow` 加可点标签 chip（`tagOverrides`），列表加 `TagB
 
 > 本节与 main 的 `DESIGN.md §59` 同题，但按**合规分支口径**记录搬运与边界；
 > 主分支那节写的是实现与真机验收全过程，这里只记本分支需要知道的结论。
+>
+> ⚠ **勘误（2026-11-07 同日）**：本节的「必须打 `#`」口径**已被 §60 推翻**，
+> 改为中文语义标记「标签xxx」；`#` 只作兼容保留。本节保留作历史记录，
+> 实现与语义一律以 §60 为准；但「详情回归 v0.7 / 删 `parseForEdit` / 编辑态不吞字」
+> 这些结论在 §60 继续成立。
 
 ### 59.1 口径变更与动机
 
@@ -3495,4 +3500,49 @@ v1.0.15 未发版，是改语法的唯一低成本窗口。
   未真机验。§58.4「真机装机未做（adb 无设备）」对 main 已过时，本分支仍未单独装机。
 - 按 AGENTS §5，本轮是日常功能改动：**版本号不动、不发版**，vivo 商店后台与 `latest.json`
   / 博客文章都不碰。
+
+---
+
+## §60 语义标签「标签xxx」（合规分支适配，2026-11-07）
+
+> 与 main `DESIGN.md §60` 同题；实现、口径、测试与踩坑细节以 main 那节为准，
+> 这里只记本分支需要知道的搬运结论与边界核对。
+
+### 60.1 口径
+
+zuige 第三次拍板：不要额外符号，句中写「标签作业」，「标签」后面的字自动成为标签；
+追问「标记词认到多宽」选 **段首或分隔符后都认** —— 夹在词中间不认（`买标签纸` 仍是标题）。
+`#` 只作 §59 旧写法的兼容，不强制。§59 修掉的「详情回归 v0.7 / 删 `parseForEdit` /
+添加与编辑共用 `parse` / `MAX_LENGTH = 8` + code point 截断」继续成立。
+
+### 60.2 搬运与冲突处理
+
+- 从 main `0d774d4` 用 `cherry-pick -n` 搬**功能 diff**：14 个文件里代码 12 个自动合并
+  （含新增 `SemanticTagFlowTest.kt`），只有 `DESIGN.md` / `README.md` 撞内容冲突 ——
+  按 §59.3 的既定做法 `git checkout --ours` 回退本分支版本后逐处改写，不整文件覆盖。
+- 本分支缺 `backup/` / `update/` / `ALL_MIGRATIONS` 与 instrumented 迁移测试，
+  本次 diff 没碰这些文件，不用做取舍。
+- ★ 两处纯函数修复都在 `TagRules` / `Format` 里，与合规边界无关，直接跟随功能 diff 落地：
+  「`normalize` 不认中文标记词」（否则 `标签标签纸` 被削成「纸」）、
+  「`split` 按标记循环切段」（否则编辑回填句末尾追加的字被静默吞掉，§58 P0 的同款变体）。
+
+### 60.3 边界核对（AGENTS §4）
+
+- **Manifest 零改动**：无 `INTERNET`；`ACCESS_NETWORK_STATE` 仍是 `tools:node="remove"`；
+  无 `REQUEST_INSTALL_PACKAGES` / `FOREGROUND_SERVICE_DATA_SYNC` / FileProvider。
+- 无 `update/` 模块、无 `UpdateDialog.kt`；关于页无「检查更新」行；
+  `PrivacyScreen` + 首启同意 + 关于页政策入口保持原样。
+- 标签仍只是本机一个文本字段，无新权限、无联网、无新数据类别 →
+  `PRIVACY_POLICY_VERSION` 不动，`docs/PRIVACY.md` 不用改。
+- 本分支原有 3 个未提交改动（`PrivacyScreen.kt` / `SettingsRepo.kt` / `docs/PRIVACY.md`）
+  是上架材料，**不进本次提交**，保持原样。
+
+### 60.4 验证与遗留
+
+- 按 zuige 要求「测试不要控制我手机，直接脚本测试就好了」：本轮验收**全部用本地脚本**，
+  不连设备、不 tap / 输入 / 装机。`:app:testDebugUnitTest` / `:app:assembleRelease` 在本分支通过。
+- 新增 `SemanticTagFlowTest`（14 条）把原真机验收清单脚本化（用户原话、编辑态追加 / 改值 /
+  删标记 / 带日期往返、标记词歧义、`8:30` 冒号、旧 `#` 兼容）；`TagRulesTest` / `ParserTest` 同步重写。
+- v7→v8 真机迁移 / 备份恢复 / 重复顺延标签不丢仍未真机验，同 main §60.7。
+- 按 AGENTS §5：**版本号不动、不发版**，vivo 商店后台与 `latest.json` / 博客文章都不碰。
 

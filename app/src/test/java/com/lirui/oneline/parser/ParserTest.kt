@@ -55,7 +55,7 @@ class ParserTest {
     @Test fun strippedTitleConvertsAndWords() {
         val r = parse("明天交周报，顺便买菜")
         assertEquals("交周报", r.title)
-        // §59：没有 # 时末尾段回归详情，不凭空造标签。
+        // §60：没有标记词时末尾段回归详情，不凭空造标签。
         assertEquals("顺便买菜", r.detail)
         assertNull(r.tag)
         assertEquals(today.plusDays(1), r.dueDate)
@@ -100,7 +100,7 @@ class ParserTest {
         assertEquals(LocalTime.of(15, 0), r.dueTime)
     }
 
-    // ---- §59：没有 # 时末尾段归详情；有 # 才是标签 ----
+    // ---- §60：没有标记词时末尾段归详情；「标签xxx」才是标签 ----
     @Test fun spaceSplitsEventAndDetail() {
         val r = parse("周六下午3点组会 要带笔记本去")
         assertEquals("组会", r.title)
@@ -1140,7 +1140,7 @@ class ParserTest {
         val list = parser().parseAll("测试长时间 详情1 10月26日 周一 9点")
         assertEquals(1, list.size)
         assertEquals("测试长时间", list[0].title)
-        // §59：详情是详情，没有 # 就没有标签。§58 曾把这里断言成 tag，等于把错位固化。
+        // §60：详情是详情，没有标记词就没有标签。§58 曾把这里断言成 tag，等于把错位固化。
         assertEquals("详情1", list[0].detail)
         assertNull(list[0].tag)
         assertEquals(LocalDate.of(2026, 10, 26), list[0].dueDate)
@@ -1451,7 +1451,7 @@ class ParserTest {
         assertEquals("过去", parseAt("待会儿过去").title)
     }
 
-    // ---------- v1.0.15 / §59 显式 #标签 ----------
+    // ---------- v1.0.15 / §60 语义标签（「标签xxx」） ----------
 
     @Test fun tag_singleSegmentHasNoTag() {
         val r = parse("买菜")
@@ -1460,8 +1460,8 @@ class ParserTest {
         assertNull(r.detail)
     }
 
-    @Test fun tag_withoutHash_lastSegmentIsDetail() {
-        // §58 的「末尾段即标签」曾把详情槽抢走；§59 回归 v0.7 语义。
+    @Test fun tag_withoutMarker_lastSegmentIsDetail() {
+        // §58 的「末尾段即标签」曾把详情槽抢走；§60 回归 v0.7 语义。
         val r = parse("交作业 带电脑")
         assertEquals("交作业", r.title)
         assertEquals("带电脑", r.detail)
@@ -1476,35 +1476,56 @@ class ParserTest {
         assertNull(r.tag)
     }
 
-    @Test fun tag_hashTrailingCreatesTag() {
-        val r = parse("交作业 #作业")
+    @Test fun tag_markerAfterSpaceCreatesTag() {
+        val r = parse("交作业 标签作业")
         assertEquals("交作业", r.title)
         assertNull(r.detail)
         assertEquals("作业", r.tag)
     }
 
-    @Test fun tag_hashWithCommaAlsoWorks() {
-        val r = parse("交作业，#作业")
-        assertEquals("交作业", r.title)
-        assertEquals("作业", r.tag)
-    }
-
-    @Test fun tag_inlineHashWithoutSpace() {
-        val r = parse("交作业#作业")
+    @Test fun tag_markerAfterColonInsideOneSegmentCreatesTag() {
+        // 冒号不进 splitTokens（8:30 会被拆坏），整段由 TagRules 自己切。
+        val r = parse("交作业：标签作业")
         assertEquals("交作业", r.title)
         assertNull(r.detail)
         assertEquals("作业", r.tag)
     }
 
-    @Test fun tag_hashWithDetailKeepsMiddleAsDetail() {
-        val r = parse("写报告 带电脑 #工作")
+    @Test fun tag_markerAfterCommaCreatesTag() {
+        val r = parse("交作业，标签作业")
+        assertEquals("交作业", r.title)
+        assertEquals("作业", r.tag)
+    }
+
+    @Test fun tag_markerWithValueColonAlsoWorks() {
+        val r = parse("交作业：标签：作业")
+        assertEquals("交作业", r.title)
+        assertEquals("作业", r.tag)
+    }
+
+    @Test fun tag_markerWithDetailKeepsMiddleAsDetail() {
+        val r = parse("写报告 带电脑 标签工作")
         assertEquals("写报告", r.title)
         assertEquals("带电脑", r.detail)
         assertEquals("工作", r.tag)
     }
 
+    @Test fun tag_markerInsideWordIsNotATag() {
+        // 「标签」前面是「买」，既不是段首也不是边界 -> 是标题的一部分。
+        val r = parse("买标签纸")
+        assertEquals("买标签纸", r.title)
+        assertNull(r.detail)
+        assertNull(r.tag)
+    }
+
+    @Test fun tag_bareMarkerWordHasNoTag() {
+        val r = parse("交作业 标签")
+        assertEquals("交作业", r.title)
+        assertNull(r.tag)
+    }
+
     @Test fun tag_dateTokensNeverBecomeTags() {
-        val r = parse("明天 交作业 #作业")
+        val r = parse("明天 交作业 标签作业")
         assertEquals("交作业", r.title)
         assertEquals("作业", r.tag)
         assertEquals(today.plusDays(1), r.dueDate)
@@ -1514,23 +1535,30 @@ class ParserTest {
         assertNull(trailing.tag)
     }
 
-    @Test fun tag_hashWeekdayIsNotParsedAsDate() {
-        // peelTitlePrefix 的「日期在中间」兜底曾会把 #周一 扫成「#」+ 周一，标签被吞。
-        val r = parse("#周一 交作业")
+    @Test fun tag_markerWeekdayIsNotParsedAsDate() {
+        // peelTitlePrefix 的「日期在中间」兜底曾会把「标签周一」扫成「标签」+ 周一。
+        val r = parse("标签周一 交作业")
         assertEquals("交作业", r.title)
         assertEquals("周一", r.tag)
         assertNull(r.dueDate)
     }
 
+    @Test fun tag_hashStillWorksForCompatibility() {
+        // §59 的旧写法不强制、也不报错。
+        assertEquals("作业", parse("交作业 #作业").tag)
+        assertEquals("作业", parse("交作业#作业").tag)
+        assertEquals("周一", parse("#周一 交作业").tag)
+    }
+
     @Test fun tag_parseAllSharesOneTagAcrossDates() {
-        val list = parser().parseAll("周一 周三 写报告 #作业")
+        val list = parser().parseAll("周一 周三 写报告 标签作业")
         assertEquals(2, list.size)
         assertEquals("写报告", list[0].title)
         assertEquals("作业", list[0].tag)
         assertEquals("作业", list[1].tag)
     }
 
-    // ---- 编辑往返：editSentence 回填 #tag 后，同一套 Parser 必须原样读回 ----
+    // ---- 编辑往返：editSentence 回填「标签xxx」后，同一套 Parser 必须原样读回 ----
 
     @Test fun editSentence_withTag_roundTrips() {
         val due = java.time.ZonedDateTime.of(2026, 10, 26, 9, 0, 0, 0, java.time.ZoneId.of("Asia/Shanghai"))
@@ -1538,7 +1566,7 @@ class ParserTest {
         val sentence = com.lirui.oneline.util.Format.editSentence(
             "开会", "带电脑", null, due, hasExactTime = true, today = today, tag = "作业"
         )
-        assertEquals("开会 带电脑 #作业 10月26日 9点", sentence)
+        assertEquals("开会 带电脑 标签作业 10月26日 9点", sentence)
         val list = parser().parseAll(sentence)
         assertEquals(1, list.size)
         assertEquals("开会", list[0].title)
@@ -1550,12 +1578,24 @@ class ParserTest {
 
     @Test fun editSentence_noDate_withTag_roundTrips() {
         val sentence = com.lirui.oneline.util.Format.editSentence(
-            "买菜", "", null, null, today = today, tag = "#生活"
+            "买菜", "", null, null, today = today, tag = "生活"
         )
-        assertEquals("买菜 #生活", sentence)
+        assertEquals("买菜 标签生活", sentence)
         val r = parser().parseAll(sentence).single()
         assertEquals("买菜", r.title)
         assertEquals("生活", r.tag)
         assertNull(r.dueDate)
+    }
+
+    @Test fun tag_valueStartingWithTagWord_roundTripsWithoutBeingStrippedTwice() {
+        // 「标签纸」作为标签值是合法的：句子里的标记词只剥一次，chip / 回填都不再抹前缀。
+        val r = parse("交作业 标签标签纸")
+        assertEquals("交作业", r.title)
+        assertEquals("标签纸", r.tag)
+        val sentence = com.lirui.oneline.util.Format.editSentence(
+            "交作业", "", null, null, today = today, tag = "标签纸"
+        )
+        assertEquals("交作业 标签标签纸", sentence)
+        assertEquals("标签纸", parser().parseAll(sentence).single().tag)
     }
 }
