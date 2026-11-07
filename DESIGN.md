@@ -4774,6 +4774,11 @@ zuige 选「**去掉推入，四页统一硬切**」。
 - 按 §60.6 起的新口径**只跑本地脚本**：`:app:compileDebugKotlin` / `:app:testDebugUnitTest` /
   `:app:assembleRelease`，不连设备、不装机、不 tap / dump。
 - 按 AGENTS §5：版本号不动、不发版，不碰 Release / Hexo / 博客文章。
-- 按 AGENTS §4：功能改动在两条分支各落一次。合规分支的 `AboutScreen.kt` 内容不同
-  （不联网版没有检查更新逻辑），`cherry-pick -n` 撞冲突时按「本分支缺什么就别带什么」
-  手工解，DESIGN / README 回退本分支版本后逐处改写；Manifest 边界重新核对。
+- 按 AGENTS §4 两条分支各落一次：main `2a04a53`，合规分支 `a66ed78`
+  （worktree `D:/Workplace/Todo-vivo-store`，从 `2a04a53` `cherry-pick -n`）。
+- 搬运时 `AboutScreen.kt` **自动合并成功**（只带「删动画调用 + 订正注释」的 diff），
+  `DESIGN.md` 撞内容冲突 → `git checkout --ours` 回退本分支版本后单独改写（沿用 §59.3 / §60.2）。
+- ★ 合并后逐项复核，没有把 main 的关于页整文件覆盖过去：合规分支 `AboutScreen.kt` 里
+  「没有应用内检查更新（v1.0.0 起）」仍在，无 `UpdateService` / `INTERNET` / 检查更新行；
+  Manifest 零改动、无 `update/` 模块；3 个上架材料保持未提交。
+- 两边 `:app:compileDebugKotlin` / `:app:testDebugUnitTest` / `:app:assembleRelease` 均 `EXIT=0`，未装机。
