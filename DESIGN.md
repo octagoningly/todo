@@ -4701,10 +4701,13 @@ zuige 看过 §59 的效果后直接否掉：「这样不太好，我的初衷�
 
 > zuige：「你测试不要控制我手机测试，直接脚本测试就好了」。此后不再连设备、不再 tap / 输入 / 装机。
 
-- 改口径**之前**曾按 §59 的旧流程覆盖安装过一次 release（21:40）：安装 `Success`、冷启动 `MainActivity` +302ms、logcat 无 `FATAL` / `Room` / `Migration didn't properly handle`；UI 文本 dump 里已有的「作业」「待办」`TagBadge` 正常渲染，旧数据无损。此后未再做任何设备操作。
-- `:app:compileDebugKotlin` / `:app:testDebugUnitTest` / `:app:assembleRelease` 全绿（`EXIT=0`），release 包 2,093,308 字节。
+- 改口径**之前**曾按 §59 的旧流程覆盖安装过一次 release（21:40）：安装 `Success`、冷启动 `MainActivity` +302ms、logcat 无 `FATAL` / `Room` / `Migration didn't properly handle`；UI 文本 dump 里已有的「作业」「待办」`TagBadge` 正常渲染，旧数据无损。
+- 22:08 zuige 单独指示「安装」：把 21:48 的**最终包**覆盖安装到主力机（`Success`，未锁屏）。**只安装、不做任何测试操作**（不 tap / 输入 / dump / 看 UI）；这不是恢复真机验收，AGENTS §6.4 的脚本验收口径不变。
+- `:app:compileDebugKotlin` / `:app:testDebugUnitTest` / `:app:assembleRelease` 全绿（`EXIT=0`）。
+  ⚠ 最终产物大小：main `app-release.apk` **2,109,692 字节**（21:48），合规分支 2,060,020 字节（21:53）。
+  21:40 那次旧包是 2,093,308 字节 —— 与 v1.0.14 发布包 `dist/todo-1.0.14.apk` 的数字巧合，别把两者混为一谈。
 - `TagRulesTest` 重写为语义标签（20 条）、`ParserTest` 标签段重写（全文件 201 条）；**新增 `SemanticTagFlowTest`（14 条）**把原真机验收清单逐条脚本化：用户原话 5 例、编辑态追加/改值/删标记/带日期往返 5 例、标记词歧义 / 多标记 / `8:30` 冒号 / 旧 `#` 兼容 4 例。三类测试 `failures=0 errors=0 skipped=0`。
-- 不装机、不发版：按 AGENTS §5，日常功能改动的收尾是 commit + 更新 md，不碰 Release / Hexo / 博客文章。
+- 不做真机测试、不发版：按 AGENTS §5，日常功能改动的收尾是 commit + 更新 md，不碰 Release / Hexo / 博客文章；22:08 的装机是 zuige 单独要求的交付动作，不等同于恢复验收。
 
 ### 60.7 遗留
 
