@@ -4715,4 +4715,8 @@ zuige 看过 §59 的效果后直接否掉：「这样不太好，我的初衷�
 ### 60.8 双分支与收尾
 
 - 按 AGENTS §4，功能改动在 `main` 与 `release/vivo-store` 各落一次；版本号两边都不递增、不发版。
-- 合规分支仍停在 §59 基线，搬运时用 `cherry-pick -n`，`DESIGN.md` / `README.md` 回退本分支版本后逐处改写；**逐行核对 Manifest 不引入 `INTERNET` 等 4 项网络权限 / `update/` / `UpdateDialog.kt` / 关于页检查更新行**。
+- main `0d774d4`（功能 + README / DESIGN §60）；合规分支 `9c2e716`（worktree `D:/Workplace/Todo-vivo-store`，从 `0d774d4` `cherry-pick -n`）。
+- 搬运时 `DESIGN.md` / `README.md` 撞内容冲突，按 §59.3 既定做法 `git checkout --ours` 回退本分支版本后逐处改写；代码 12 个文件自动合并，`TagRules` / `Parser` / `Format` / `SemanticTagFlowTest` 与 main 逐字一致。
+- **Manifest 与关于页零改动**：无 `INTERNET`；`ACCESS_NETWORK_STATE` 仍是 `tools:node="remove"`；无 `REQUEST_INSTALL_PACKAGES` / `FOREGROUND_SERVICE_DATA_SYNC` / FileProvider / `update/` / `UpdateDialog.kt` / 检查更新行。合规分支 3 个上架材料（`PrivacyScreen.kt` / `SettingsRepo.kt` / `docs/PRIVACY.md`）保持未提交、原样保留。
+- 两条分支的 `AGENTS.md §6.4` 同步改成「本地脚本验收」（见 §60.6），覆盖旧规矩「直接装机验证」。
+- 两边 `:app:testDebugUnitTest` + `:app:assembleRelease` 均 `EXIT=0`，**未装机**。

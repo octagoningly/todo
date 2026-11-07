@@ -175,7 +175,8 @@
 1. **任务前先讨论方案**，不动手；确认后再写代码。
 2. 按第 2 节四级顺序实现；能复用就不新写。
 3. 功能改动**两条分支各落一次**（第 4 节）；合规分支不越界。
-4. `:app:testDebugUnitTest` → `:app:assembleRelease` → **直接装机验证**（release 签名；debug 包会 `UPDATE_INCOMPATIBLE`）。改完代码不用等 zuige 说，装机不等于发版。
+4. `:app:testDebugUnitTest` → `:app:assembleRelease` → **本地脚本验收**。改完代码不用等 zuige 说就跑构建，构建不等于发版。
+   ★ **zuige 2026-11-07：「测试不要控制我手机，直接脚本测试就好了」** —— 默认不连设备、不装机、不 `input tap`、不 dump UI；原真机验收清单一律固化成 JVM 单测（带 `Context` / `org.json` 的除外，见 §7）。确需真机（如 Room 迁移、SAF 选文件）必须**先单独征得同意**；§7 的真机条目只在这种授权后适用。
 5. **改完文件必须更新对应的 md**（第 0 节分工）：功能 → `README.md` + `DESIGN.md` 追加节；规矩 → 本文件；领域专题 → `docs/*`。
 6. `git status --short` 核对后**按具体路径 `git add` + `git commit`**，每轮功能改动收尾立刻提交，不等 zuige 说。
    ★ **禁止 `git add -A`**；别带 `output/`、`show/`、`dist/`、`docs/COPYRIGHT.md`（除非明确要求一并提交）。
