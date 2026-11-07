@@ -628,11 +628,16 @@ main 的 `docs/PRIVACY.md` 是联网版，两者内容不同，别互相覆盖�
 
 | 文件 | 内容 |
 |---|---|
-| [DESIGN.md](DESIGN.md) | 设计决策、解析语义、踩过的坑与源码级结论 |
-| [COPY.md](docs/COPY.md) | 对外分享文案：小红书短文案 + 酷安首发长文案 |
+| **[AGENTS.md](AGENTS.md)** | **项目开发规矩**：技术栈基线、新功能「旧模块 → Google 官方 → 开源参考 → 最后手写」四级顺序、UI 红线、双分支边界、发版两个源 + 博客文章的同步流程、改动收尾清单。**每次改动前先读** |
+| [DESIGN.md](DESIGN.md) | 设计决策、解析语义、踩过的坑与源码级结论（按版本追加，现至 §57） |
+| [docs/DEV-NOTES.md](docs/DEV-NOTES.md) | 2026-10-22 从项目记忆迁出的历史归档（只读） |
+| [docs/PRIVACY.md](docs/PRIVACY.md) | 权限清单与隐私政策（两个分支内容不同） |
+| [docs/BACKGROUND.md](docs/BACKGROUND.md) | 后台保活 / 精确闹钟 / 厂商兼容 |
+| [docs/STORE-PLAN.md](docs/STORE-PLAN.md) · [docs/STORE-RELEASE.md](docs/STORE-RELEASE.md) | 商店上架计划与合规改造记录（后者为分叉前快照） |
+| [docs/COPY.md](docs/COPY.md) | 对外分享文案：小红书短文案 + 酷安首发长文案 |
+| [docs/COPYRIGHT.md](docs/COPYRIGHT.md) | 软著登记材料的生成方式、口径与踩坑（产出在 `output/软著材料/`） |
 | [QUOTES.md](QUOTES.md) | 通知文案池 |
 | [SMOKE-REPORT.md](SMOKE-REPORT.md) | 真机冒烟验证记录 |
-| [docs/COPYRIGHT.md](docs/COPYRIGHT.md) | 软著登记材料的生成方式、口径与踩坑（产出在 `output/软著材料/`） |
 
 ---
 
