@@ -3383,3 +3383,58 @@ release/vivo-store   404e8b6  国内合规（vivo 商店上架）版，1.0.0 / v
 ★ 通用教训：**改权限清单时必须同时扫隐私政策全文**。删权限只是让系统侧不再联网，
   政策里那段「本应用唯一的请求」会变成审核员眼里的自证材料。
 
+---
+
+## §58 一句话末尾标签（合规分支适配，2026-11-07）
+
+需求口径（zuige）：「一句话待办最后可以加上标签，用逗号或空格隔开，一条一个，显示在跟
+『每天』『每周』相同的位置，也可以编辑。」规则与决策全文见 `main` 分支 `DESIGN.md §58`；
+本节只记**本分支的落地差异**，两边功能表现一致。
+
+### 58.1 规则（与 main 一致）
+
+`TagRules.split(parts)`（纯函数、无 Android 依赖）：1 段 = 纯标题无标签；≥2 段时首段 = 标题、
+**最后一段 = 标签**、中间段 = 详情。标签 `normalize()` 只取第一个词、限长 20 字。
+⚠ 相对 v0.7「第一段之后全是详情」是语义变更：两段输入的详情槽让给标签。
+UI：预览 `FlowRow` 加可点标签 chip（`tagOverrides`），列表加 `TagBadge`；右侧徽章行移出
+`dueAtMillis?.let`，无日期待办也能显示。编辑态走 `MainViewModel.parseForEdit` 锚定库里的
+详情/标签，避免 `Format.editSentence` 回填句被重解析洗掉。
+
+### 58.2 ★ 本分支的适配差异（cherry-pick 踩到的坑）
+
+`git cherry-pick -n ffb9095` 从 main 搬过来时出现 8 处冲突，根因是**两条分支功能基线已分叉**，
+不是标签功能本身有问题。逐项按「只搬功能 diff、不整文件覆盖」处理：
+
+| 冲突 | 处理 |
+|---|---|
+| `AGENTS.md` | 本分支原本没有 → **带过来**（文件自己要求两分支一致） |
+| `backup/BackupCodec.kt`、`BackupRules.kt` | 本分支**没有本地备份模块**（v1.0.11 那套）→ 删掉，不引入半个模块；`BackupRules.DB_VERSION` 自然也不存在 |
+| `AppDatabaseMigrationTest.kt` | 本分支没有 `androidTest` / `room-testing` 依赖 → 删掉，否则编译不过 |
+| `AppDatabase.kt` | 本分支**没有 `ALL_MIGRATIONS` 数组**（那是 main 为 instrumented 测试抽的）→ 不引入，直接在 `addMigrations(...)` 列表补 `MIGRATION_7_8` |
+| `TodoDao.kt` | main 的 diff 上下文带了备份用的 4 个 query → 只取 `updateContent` 加 `tag` 的两行，其余不搬 |
+| `DESIGN.md` / `README.md` | 两边历史不同 → 回退到本分支版本后单独改写，不整文件覆盖 |
+
+数据层其余一致：`Todo.tag`、`Room v7→v8`（`TEXT NOT NULL DEFAULT ''` + `hasColumn` 幂等）、
+`8.json` 由 KSP 生成、`TodoRepository` 的 rollForward / undo 两处 `updateContent` 都传 `todo.tag`。
+
+### 58.3 边界核对（§4 红线）
+
+本轮 **Manifest 与关于页零改动**。复核结果：`ACCESS_NETWORK_STATE` 仍是
+`tools:node="remove"`（抵消 WorkManager 注入），无 `INTERNET` / `REQUEST_INSTALL_PACKAGES` /
+`FOREGROUND_SERVICE_DATA_SYNC` / FileProvider；无 `update/` 模块、无 `UpdateDialog.kt`；
+`AboutScreen.kt` 里「检查更新」只出现在「没有应用内检查更新」的说明注释中。
+`PrivacyScreen` + 首启同意 + 关于页政策入口保持原样，`PRIVACY_POLICY_VERSION` 不动
+（标签只是本机存储的一个文本字段，不构成政策实质变更）。
+
+### 58.4 验证与双分支现状
+
+- `:app:testDebugUnitTest` 通过（含 `TagRulesTest`、Parser 标签用例）；Kotlin 编译 + Room KSP 通过。
+- 真机装机未做（adb 无设备），与 main 同一遗留。
+- ★ **分叉事实（需要单独决策）**：本分支停在 `1.0.1 / versionCode 35`，main 是
+  `1.0.14 / 48`；main 领先 **25 个提交**，本分支领先 5 个（全是隐私/上架材料）。
+  本分支缺 `backup/`（4 文件）、`update/`（5 文件）、`UpdateDialog.kt`、`AGENTS.md`、
+  迁移测试；独有 `PrivacyScreen.kt`。也就是说 AGENTS §4「其它功能尽量保持一致」的前提
+  已不成立，逐轮 cherry-pick 会越来越容易撞 modify/delete。建议另开一轮决定：
+  要么把合规分支整体同步到 main 的功能基线，要么明确它只做上架快照、不再逐功能跟进。
+- 按 AGENTS §5，本轮是日常功能改动，**版本号不动、不发版**，不碰 `latest.json` / 博客文章。
+

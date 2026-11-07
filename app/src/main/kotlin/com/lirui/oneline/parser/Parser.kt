@@ -278,19 +278,21 @@ class Parser(
             todayTimePast = false
         }
 
-        // Space-separated remainder: the FIRST chunk is the event itself, everything after
-        // it is the free-text detail ("周六下午3点组会 要带笔记本去" -> 组会 / 要带笔记本去).
+        // v1.0.15：一段 = 纯标题；两段以上最后一段是标签、中间段才是详情。
+        // 切分规则全部收敛在 TagRules（纯函数、可单测），这里只负责传文字段。
         val parts = acc.title.map { it.trim() }.filter { it.isNotEmpty() }
+        val split = TagRules.split(parts)
         return ParsedTodo(
-            title = parts.firstOrNull().orEmpty(),
+            title = split.title,
             dueDate = dueDate,
             dueTime = acc.time,
             repeatDays = acc.repeatDays,
             timeError = acc.timeError || todayTimePast,
             dateError = acc.dateError,
-            detail = parts.drop(1).joinToString(" ").trim().ifBlank { null },
+            detail = split.detail,
             startDate = acc.startDate,
-            endTime = acc.endTime
+            endTime = acc.endTime,
+            tag = split.tag
         )
     }
 
@@ -335,21 +337,21 @@ class Parser(
         }
         if (dates.size <= 1) return listOf(parse(input))
 
-        val parts = acc.title.map { it.trim() }.filter { it.isNotEmpty() }
-        val title = parts.firstOrNull().orEmpty()
-        val detail = parts.drop(1).joinToString(" ").trim().ifBlank { null }
+        // v1.0.15：与 parse() 共用同一套切分，多日期时每条待办带同一个标签。
+        val split = TagRules.split(acc.title.map { it.trim() }.filter { it.isNotEmpty() })
         val time = acc.time
 
         return dates.sorted().map { d ->
             ParsedTodo(
-                title = title,
+                title = split.title,
                 dueDate = d,
                 dueTime = time,
                 repeatDays = acc.repeatDays,
                 timeError = d == today && time != null && time.isBefore(now),
                 dateError = d.isBefore(today),
-                detail = detail,
-                endTime = acc.endTime
+                detail = split.detail,
+                endTime = acc.endTime,
+                tag = split.tag
             )
         }
     }

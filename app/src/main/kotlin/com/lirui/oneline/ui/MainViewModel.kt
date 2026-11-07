@@ -59,6 +59,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         lastParse = all.firstOrNull()
     }
 
+    /**
+     * v1.0.15 编辑态专用的句子重解析。
+     *
+     * ★ 为什么要锚定：`Format.editSentence` 回填的句子是「标题 详情 日期 时刻」，
+     *   而新解析规则把**最后一段文字**当标签。编辑时用户改一个字，输入框会重新解析整句
+     *   —— 库里的详情会被洗成标签、标签也会跟着跑偏。编辑态的详情/标签属于「已有数据」，
+     *   不该由句子猜测，所以解析完直接把这两个字段钉回 [Todo] 里的值。
+     *   用户想改标签/详情走预览卡片的 chip（tagOverrides / detailOverrides 优先于解析值）。
+     */
+    fun parseForEdit(text: String, detail: String, tag: String) {
+        val all = parser.parseAll(text).map {
+            it.copy(detail = detail.ifBlank { null }, tag = tag.ifBlank { null })
+        }
+        lastParses = all
+        lastParse = all.firstOrNull()
+    }
+
     /** Prefill the parse preview for an existing todo (for the edit sheet). */
     fun previewExisting(todo: Todo) {
         // Pinned zone: a device-timezone change must not shift what the stored epoch means.
@@ -81,7 +98,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             repeatDays = todo.repeatDays,
             detail = todo.detail.ifBlank { null },
             startDate = start,
-            endTime = if (todo.hasExactTime) end else null
+            endTime = if (todo.hasExactTime) end else null,
+            tag = todo.tag.ifBlank { null }
         )
         lastParse = parsed
         lastParses = listOf(parsed)

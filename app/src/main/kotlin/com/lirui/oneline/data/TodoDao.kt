@@ -41,6 +41,7 @@ interface TodoDao {
     @Query("UPDATE todos SET archived = 0 WHERE id = :id")
     suspend fun unarchiveById(id: Long)
 
-    @Query("UPDATE todos SET title = :title, detail = :detail, dueAtMillis = :dueAtMillis, startAtMillis = :startAtMillis, endAtMillis = :endAtMillis, hasExactTime = :hasExactTime, repeatDays = :repeatDays WHERE id = :id")
-    suspend fun updateContent(id: Long, title: String, detail: String, dueAtMillis: Long?, startAtMillis: Long?, endAtMillis: Long?, hasExactTime: Boolean, repeatDays: Int)
+    // ★ 合规分支没有本地备份模块（v1.0.11 那套），这里只加 tag，不搬备份相关的 query。
+    @Query("UPDATE todos SET title = :title, detail = :detail, tag = :tag, dueAtMillis = :dueAtMillis, startAtMillis = :startAtMillis, endAtMillis = :endAtMillis, hasExactTime = :hasExactTime, repeatDays = :repeatDays WHERE id = :id")
+    suspend fun updateContent(id: Long, title: String, detail: String, tag: String, dueAtMillis: Long?, startAtMillis: Long?, endAtMillis: Long?, hasExactTime: Boolean, repeatDays: Int)
 }

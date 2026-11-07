@@ -59,6 +59,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.lirui.oneline.parser.ParsedTodo
 import com.lirui.oneline.parser.RangeMerge
+import com.lirui.oneline.parser.TagRules
 import com.lirui.oneline.ui.theme.actionContainer
 import com.lirui.oneline.ui.theme.actionContent
 import com.lirui.oneline.ui.theme.actionDisabledContainer
@@ -117,6 +118,9 @@ fun AddSheet(
     var timeOverrides by remember { mutableStateOf(mapOf<Int, java.time.LocalTime>()) }
     var titleOverrides by remember { mutableStateOf(mapOf<Int, String>()) }
     var detailOverrides by remember { mutableStateOf(mapOf<Int, String?>()) }
+    // v1.0.15 标签覆盖：与 title/detail 同口径 —— 键存在即「用户手动改过」，值为 null 表示清空。
+    // 编辑态的句子重解析由 MainViewModel.parseForEdit 锚定库里的标签，不会被打字洗掉。
+    var tagOverrides by remember { mutableStateOf(mapOf<Int, String?>()) }
     var pickingIndex by remember { mutableIntStateOf(-1) }
     var showDatePicker by remember { mutableStateOf(false) }
 
@@ -133,6 +137,7 @@ fun AddSheet(
     var showTimePicker by remember { mutableStateOf(false) }
     var showTitleEditor by remember { mutableStateOf(false) }
     var showDetailEditor by remember { mutableStateOf(false) }
+    var showTagEditor by remember { mutableStateOf(false) }
     // 弹层存活期内的"现在"。★ 不用 remember：弹层可能开着跨过 0 点（或跨过用户设的那个
     // 时刻），remember 会把"打开那一刻"钉死，之后 timeError 一直按旧时间判断。
     // 每次重组现取，成本可以忽略，输入一个字就会触发重组。
@@ -150,6 +155,7 @@ fun AddSheet(
             val time = timeOverrides[index] ?: p.dueTime
             val title = titleOverrides[index] ?: p.title
             val detail = if (detailOverrides.containsKey(index)) detailOverrides[index] else p.detail
+            val tag = if (tagOverrides.containsKey(index)) tagOverrides[index] else p.tag
             // 区间归一化（反转对调、结束日没了就清开始日）与预览卡片共用同一个函数 ——
             // 两处各写一遍正是"卡片显示的和实际存的不一样"的根因。
             val (start, end) = normalizeRange(startRaw, date)
@@ -170,7 +176,8 @@ fun AddSheet(
             }
             if (end == null && time == null && start == null && endTime == null &&
                 !dateOverrides.containsKey(index) && !startDateOverrides.containsKey(index) &&
-                !titleOverrides.containsKey(index) && !detailOverrides.containsKey(index)
+                !titleOverrides.containsKey(index) && !detailOverrides.containsKey(index) &&
+                !tagOverrides.containsKey(index)
             ) {
                 p
             } else {
@@ -179,6 +186,7 @@ fun AddSheet(
                     dueDate = end,
                     dueTime = time,
                     detail = detail,
+                    tag = tag,
                     startDate = start,
                     endTime = endTime,
                     // hasExactTime 是计算属性（dueTime != null）：手动选了时刻自动就是精确提醒，
@@ -337,6 +345,7 @@ fun AddSheet(
                     timeOverrides = timeOverrides,
                     titleOverrides = titleOverrides,
                     detailOverrides = detailOverrides,
+                    tagOverrides = tagOverrides,
                     mergeMode = mergeMode,
                     onToggleMerge = { mergeMode = !mergeMode },
                     onPickDate = { index ->
@@ -358,6 +367,10 @@ fun AddSheet(
                     onEditDetail = { index ->
                         pickingIndex = index
                         showDetailEditor = true
+                    },
+                    onEditTag = { index ->
+                        pickingIndex = index
+                        showTagEditor = true
                     }
                 )
             }
@@ -609,6 +622,49 @@ fun AddSheet(
                 }
             )
         }
+
+        // ── 标签编辑（v1.0.15）──
+        // 一条待办一个标签；留空 = 清掉标签（override 记 null，不能退回解析值）。
+        if (showTagEditor && pickingIndex in parses.indices) {
+            val current = if (tagOverrides.containsKey(pickingIndex)) {
+                tagOverrides[pickingIndex].orEmpty()
+            } else {
+                parses[pickingIndex].tag.orEmpty()
+            }
+            var draft by remember(pickingIndex) { mutableStateOf(current) }
+            AlertDialog(
+                onDismissRequest = { showTagEditor = false },
+                title = { Text("编辑标签") },
+                text = {
+                    Column {
+                        OutlinedTextField(
+                            value = draft,
+                            onValueChange = { draft = it },
+                            singleLine = true,
+                            label = { Text("标签") },
+                            placeholder = { Text("作业") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            "一条待办一个标签；留空即不设标签",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        // 规范化收敛到纯函数：只取第一个词、限长，避免把分隔符带进徽章。
+                        tagOverrides = tagOverrides +
+                            (pickingIndex to TagRules.normalize(draft).ifBlank { null })
+                        showTagEditor = false
+                    }) { Text("保存") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showTagEditor = false }) { Text("取消") }
+                }
+            )
+        }
         }
         }
     }
@@ -632,6 +688,7 @@ private fun PreviewCard(
     timeOverrides: Map<Int, java.time.LocalTime>,
     titleOverrides: Map<Int, String>,
     detailOverrides: Map<Int, String?>,
+    tagOverrides: Map<Int, String?>,
     /** 「合并为时间段」开关状态（v0.9.3 补丁）。 */
     mergeMode: Boolean = false,
     onToggleMerge: () -> Unit = {},
@@ -639,7 +696,8 @@ private fun PreviewCard(
     onPickRange: (Int) -> Unit,
     onPickTime: (Int) -> Unit,
     onEditTitle: (Int) -> Unit,
-    onEditDetail: (Int) -> Unit
+    onEditDetail: (Int) -> Unit,
+    onEditTag: (Int) -> Unit
 ) {
     val items = parses.mapIndexed { index, p ->
         // 有覆盖就用覆盖值渲染，否则用句子解析值。
@@ -648,6 +706,7 @@ private fun PreviewCard(
         val time = timeOverrides[index] ?: p.dueTime
         val title = titleOverrides[index] ?: p.title
         val detail = if (detailOverrides.containsKey(index)) detailOverrides[index] else p.detail
+        val tag = if (tagOverrides.containsKey(index)) tagOverrides[index] else p.tag
         // ★ 必须走同一套归一化。以前这里直接用原始 start/date，于是：
         //   把结束日改到开始日之前 → 卡片显示「10月25日 – 10月23日」，保存后却是 10月23–25；
         //   把结束日选成「无日期」→ 卡片还挂着「开始 10月25日」，保存后开始日却没了。
@@ -659,7 +718,7 @@ private fun PreviewCard(
             time.isBefore(p.endTime) -> p.endTime
             else -> null
         }
-        PreviewRow(index, p, start, end, time, endTime, title, detail)
+        PreviewRow(index, p, start, end, time, endTime, title, detail, tag)
     }.filter { row ->
         row.date != null || row.time != null || row.start != null || row.endTime != null ||
             row.p.repeatDays > 0 || row.title.isNotBlank()
@@ -740,11 +799,13 @@ private fun PreviewCard(
                     endTime = row.endTime,
                     title = row.title,
                     detail = row.detail,
+                    tag = row.tag,
                     onPickDate = { onPickDate(row.index) },
                     onPickRange = { onPickRange(row.index) },
                     onPickTime = { onPickTime(row.index) },
                     onEditTitle = { onEditTitle(row.index) },
-                    onEditDetail = { onEditDetail(row.index) }
+                    onEditDetail = { onEditDetail(row.index) },
+                    onEditTag = { onEditTag(row.index) }
                 )
             }
         }
@@ -785,7 +846,9 @@ private data class PreviewRow(
     /** 时间区间结束点（#1）；null = 普通单时刻。 */
     val endTime: java.time.LocalTime?,
     val title: String,
-    val detail: String?
+    val detail: String?,
+    /** v1.0.15：末尾标签，null / 空白 = 无标签。 */
+    val tag: String?
 )
 
 /**
@@ -807,11 +870,14 @@ private fun PreviewItem(
     endTime: java.time.LocalTime?,
     title: String,
     detail: String?,
+    /** v1.0.15 标签：与「每天/每周」同一排 chip，点开可编辑或清空。 */
+    tag: String?,
     onPickDate: () -> Unit,
     onPickRange: () -> Unit,
     onPickTime: () -> Unit,
     onEditTitle: () -> Unit,
-    onEditDetail: () -> Unit
+    onEditDetail: () -> Unit,
+    onEditTag: () -> Unit
 ) {
     val cs = MaterialTheme.colorScheme
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -853,6 +919,12 @@ private fun PreviewItem(
                 7 -> InfoChip("每周")
                 in 1..Int.MAX_VALUE -> InfoChip("每${p.repeatDays}天")
             }
+            // v1.0.15 标签 chip：跟「每天/每周」同一排。没有标签时是「+ 标签」入口，
+            // 有标签时直接显示标签文字，点一下弹编辑框（同样是实底 secondaryContainer）。
+            InfoChip(
+                tag?.takeIf { it.isNotBlank() } ?: "+ 标签",
+                onClick = onEditTag
+            )
         }
         // 标题行：可点（编辑事件）。不加图标 —— zuige：右边的编辑图标不需要，
         // 可点性用点击反馈表达，不靠视觉装饰。
