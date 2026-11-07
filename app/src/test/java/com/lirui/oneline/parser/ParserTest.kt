@@ -55,7 +55,9 @@ class ParserTest {
     @Test fun strippedTitleConvertsAndWords() {
         val r = parse("明天交周报，顺便买菜")
         assertEquals("交周报", r.title)
-        assertEquals("顺便买菜", r.detail)
+        // v1.0.15：末尾段归标签，不再并入详情。
+        assertEquals("顺便买菜", r.tag)
+        assertNull(r.detail)
         assertEquals(today.plusDays(1), r.dueDate)
     }
 
@@ -98,11 +100,12 @@ class ParserTest {
         assertEquals(LocalTime.of(15, 0), r.dueTime)
     }
 
-    // ---- event / detail split on the first space ----
-    @Test fun spaceSplitsEventAndDetail() {
+    // ---- v1.0.15 起：最后一段是标签，中间段才是详情 ----
+    @Test fun spaceSplitsEventAndTag() {
         val r = parse("周六下午3点组会 要带笔记本去")
         assertEquals("组会", r.title)
-        assertEquals("要带笔记本去", r.detail)
+        assertEquals("要带笔记本去", r.tag)
+        assertNull(r.detail)
         assertEquals(LocalDate.of(2026, 10, 24), r.dueDate)
         assertEquals(LocalTime.of(15, 0), r.dueTime)
     }
@@ -473,7 +476,7 @@ class ParserTest {
         val r = parse("1号线 坐地铁")
         assertNull(r.dueDate)
         assertEquals("1号线", r.title)
-        assertEquals("坐地铁", r.detail)
+        assertEquals("坐地铁", r.tag)
         assertNull(parse("3号楼 开会").dueDate)
         assertNull(parse("5号窗口 取件").dueDate)
     }
@@ -1137,7 +1140,7 @@ class ParserTest {
         val list = parser().parseAll("测试长时间 详情1 10月26日 周一 9点")
         assertEquals(1, list.size)
         assertEquals("测试长时间", list[0].title)
-        assertEquals("详情1", list[0].detail)
+        assertEquals("详情1", list[0].tag)
         assertEquals(LocalDate.of(2026, 10, 26), list[0].dueDate)
         assertFalse(list[0].dateError)
     }
@@ -1167,7 +1170,7 @@ class ParserTest {
         val list = parser().parseAll(sentence)
         assertEquals(1, list.size)
         assertEquals("开会", list[0].title)
-        assertEquals("带电脑", list[0].detail)
+        assertEquals("带电脑", list[0].tag)
         assertNull(list[0].startDate)
         assertEquals(LocalDate.of(2026, 10, 26), list[0].dueDate)
         assertFalse(list[0].dateError)
@@ -1443,5 +1446,53 @@ class ParserTest {
         assertEquals("过去", parseAt("稍等一下过去").title)
         assertEquals(LocalTime.of(15, 0), parseAt("待会儿过去").dueTime)
         assertEquals("过去", parseAt("待会儿过去").title)
+    }
+
+    // ---------- v1.0.15 末尾标签 ----------
+
+    @Test fun tag_singleSegmentHasNoTag() {
+        val r = parse("买菜")
+        assertEquals("买菜", r.title)
+        assertNull(r.tag)
+        assertNull(r.detail)
+    }
+
+    @Test fun tag_trailingSpaceCreatesTag() {
+        val r = parse("交作业 作业")
+        assertEquals("交作业", r.title)
+        assertEquals("作业", r.tag)
+        assertNull(r.detail)
+    }
+
+    @Test fun tag_trailingCommaCreatesTag() {
+        val r = parse("交作业，作业")
+        assertEquals("交作业", r.title)
+        assertEquals("作业", r.tag)
+    }
+
+    @Test fun tag_threeSegmentsKeepMiddleAsDetail() {
+        val r = parse("交作业 带电脑 作业")
+        assertEquals("交作业", r.title)
+        assertEquals("带电脑", r.detail)
+        assertEquals("作业", r.tag)
+    }
+
+    @Test fun tag_dateTokensNeverBecomeTags() {
+        val r = parse("明天 交作业 作业")
+        assertEquals("交作业", r.title)
+        assertEquals("作业", r.tag)
+        assertEquals(today.plusDays(1), r.dueDate)
+        // 日期写在最后时被解析消耗掉，不该凭空造出一个标签。
+        val trailing = parse("交作业 明天")
+        assertEquals("交作业", trailing.title)
+        assertNull(trailing.tag)
+    }
+
+    @Test fun tag_parseAllSharesOneTagAcrossDates() {
+        val list = parser().parseAll("周一 周三 写报告 作业")
+        assertEquals(2, list.size)
+        assertEquals("写报告", list[0].title)
+        assertEquals("作业", list[0].tag)
+        assertEquals("作业", list[1].tag)
     }
 }

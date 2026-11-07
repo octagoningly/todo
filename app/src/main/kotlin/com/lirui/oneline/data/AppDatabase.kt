@@ -11,7 +11,7 @@ import com.lirui.oneline.data.model.Todo
 
 @Database(
     entities = [Todo::class, FocusSession::class],
-    version = 7,
+    version = 8,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -106,6 +106,23 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v1.0.15：新增 [Todo.tag]（末尾标签）。
+         *
+         * ★ 列定义与实体逐字对齐：`TEXT NOT NULL DEFAULT ''` 对应
+         *   `@ColumnInfo(defaultValue = "")`。少写 DEFAULT 时 PRAGMA 读到的 dflt_value
+         *   是空、Room 校验直接抛异常（0.9.3 那次启动即崩，见 [MIGRATION_4_5] 注释）。
+         * ★ 幂等：迁移中途失败但没回滚的设备列可能已存在，先查 PRAGMA 再加。
+         * 老数据全部落成空串 = 无标签，行为零变化。
+         */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                if (!hasColumn(db, "todos", "tag")) {
+                    db.execSQL("ALTER TABLE todos ADD COLUMN tag TEXT NOT NULL DEFAULT ''")
+                }
+            }
+        }
+
         private fun hasColumn(db: SupportSQLiteDatabase, table: String, column: String): Boolean {
             db.query("PRAGMA table_info($table)").use { cursor ->
                 val nameIndex = cursor.getColumnIndex("name")
@@ -118,13 +135,13 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
-         * 迁移链唯一清单（v1.0.10）。
+         * 迁移链唯一清单（v1.0.10 建，v1.0.15 续到 v8）。
          * instrumented 的 `MigrationTestHelper` 必须拿**同一组** Migration 对象，
          * 否则测的是"另一条链"；所以从 private 提成数组，运行时和两侧测试共用。
          */
         val ALL_MIGRATIONS = arrayOf(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
-            MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7
+            MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8
         )
 
         fun get(context: Context): AppDatabase {

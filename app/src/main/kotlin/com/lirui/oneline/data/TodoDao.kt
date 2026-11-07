@@ -42,8 +42,8 @@ interface TodoDao {
     @Query("UPDATE todos SET archived = 0 WHERE id = :id")
     suspend fun unarchiveById(id: Long)
 
-    @Query("UPDATE todos SET title = :title, detail = :detail, dueAtMillis = :dueAtMillis, startAtMillis = :startAtMillis, endAtMillis = :endAtMillis, hasExactTime = :hasExactTime, repeatDays = :repeatDays WHERE id = :id")
-    suspend fun updateContent(id: Long, title: String, detail: String, dueAtMillis: Long?, startAtMillis: Long?, endAtMillis: Long?, hasExactTime: Boolean, repeatDays: Int)
+    @Query("UPDATE todos SET title = :title, detail = :detail, tag = :tag, dueAtMillis = :dueAtMillis, startAtMillis = :startAtMillis, endAtMillis = :endAtMillis, hasExactTime = :hasExactTime, repeatDays = :repeatDays WHERE id = :id")
+    suspend fun updateContent(id: Long, title: String, detail: String, tag: String, dueAtMillis: Long?, startAtMillis: Long?, endAtMillis: Long?, hasExactTime: Boolean, repeatDays: Int)
 
     // ---------- 本地备份（v1.0.11）----------
     // 导出必须含**已归档**的待办：那是用户数据，不是缓存。

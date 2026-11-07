@@ -4481,3 +4481,56 @@ zuige 要求「blog 源也更新，文章里面的下载也更新」。改动落
 > 遗留：`latest.json` 自身 CF 缓存 `max-age=600`，改动后最多 10 分钟全网一致；
 > 不带参数的原 APK 直链要等 4 小时缓存过期才恢复，期间请用带 `?v=48` 的链接。
 > 「发现新版弹窗」仍未验证（§57.7 末条），要等下一个更高版本。
+
+---
+
+## §58 一句话末尾标签（v1.0.15 开发中，2026-11-07）
+
+### 58.1 需求与拍板口径
+
+zuige：「一句话待办最后可以加上标签，用逗号或空格隔开，比如『作业』；标签显示在跟『每天』『每周』相同的位置，也可以编辑；标签一条一个。」
+
+讨论时先把一个硬冲突摆了出来：`splitTokens` 从 v0.7 起就把空格 / 逗号 / 顿号 / 句号 / 分号 / `·` / `&` 当分隔符，**第一段之后的全部内容归 `detail`（详情）**。也就是说「末尾加标签」和「写详情」抢的是同一个语法槽位。zuige 看完仍拍板「末尾段就是标签」，于是按确定性规则落地，不做启发式猜测（「开会 重要」不会被算法猜成标签或详情，它按规则就是标签）。
+
+### 58.2 四级实现顺序结论（AGENTS §2）
+
+1. **复用旧模块**：`Parser.splitTokens` / `ParsedTodo` / `InfoChip` + 手动覆盖表（`titleOverrides` 那套）/ `RepeatBadge` / `MIGRATION_5_6` 加列模板 / `BackupCodec` 编解码 / `RangeMerge`（`base.copy` 自动带上第一条的 tag）。
+2. **Google 官方**：M3 `FlowRow` + 同款实底 `Surface` chip、`AlertDialog` + `OutlinedTextField`、Room `Migration`。没有自绘控件。
+3. **开源参考**：不适用。没有可借鉴的算法，也不该为此引依赖。
+4. **手写**：只剩「末尾段切分 / 规范化」抽成无 Android 依赖的纯函数 `TagRules`（`TagSplit`），补 `TagRulesTest`。理由：仓库无对应模块、官方无中文标签语法解析；项目没 Robolectric，带 `Context` 就测不了。
+
+### 58.3 切分规则与语义变更
+
+`TagRules.split(parts)`：0 段 → 空标题；**1 段 → 整段是标题、无标签**（「买菜」不能生成一条没有标题的待办）；≥2 段 → 第一段标题、**最后一段标签**、中间段拼成详情。标签 `normalize()` 只取第一个词、去残留分隔符、限长 20 字。
+
+⚠ **这是相对 v0.7 的语义变更**：两段输入（如「组会 要带笔记本去」）的末尾段不再写进 `detail`，而成为标签。三段及以上时中间段仍是详情，想保留长详情可在预览卡片点「+ 详情」手动填。为此同步改了 `ParserTest` 里 5 处 `detail` 断言（改为断言 `tag`），并新增 7 个标签解析用例。
+
+日期 / 时间 / 重复词在 Parser 里已被剥离，不会进入 `parts`，所以「明天 交作业 作业」与「交作业 作业 明天」得到同一组文字段；日期写在句末时也不会凭空造出标签。
+
+### 58.4 编辑态锚定（本轮最容易漏的坑）
+
+`Format.editSentence` 生成的回填句子是「标题 详情 日期 时刻」，而编辑态 `onValueChange` 会 `vm.parse(t)` **重新解析整句**。改了解析规则后，用户编辑已有待办时只动一个字，库里的详情就会被洗成标签、标签也会跑偏。
+
+解法：新增 `MainViewModel.parseForEdit(text, detail, tag)`——解析完把这两字段钉回 `Todo` 里的值；`TodoListScreen.onPreview` 在 `editTarget != null` 时走它。编辑态想改标签 / 详情走预览 chip（`tagOverrides` / `detailOverrides` 优先于解析值），不靠句子猜。`previewExisting()` 相应带 `tag`。
+
+★ 另一处同款陷阱：`AddSheet.effectiveParses()` 有个「所有 override 都没动过就返回原 `p`」的短路，加 `tagOverrides` 时必须把它并进短路条件，否则只改标签保存时会被短路吞掉。
+
+### 58.5 数据层与备份
+
+- `Todo.tag: String = ""`（`@ColumnInfo(defaultValue = "")`），**Room v7→v8**：`ALTER TABLE todos ADD COLUMN tag TEXT NOT NULL DEFAULT ''` + `hasColumn` 幂等。显式 `DEFAULT ''` 是红线——可空列用 `DEFAULT NULL`，非空串列用 `DEFAULT ''`，漏了 Room 迁移校验会启动即崩（§ 0.9.3 那次）。
+- `ALL_MIGRATIONS` 加 `MIGRATION_7_8`；`AppDatabaseMigrationTest` 全链改到 v8、expected 加 `tag`、新增 `migrate7To8_tagHasExplicitDefaultEmptyString` 断言 `dflt_value == "''"`；`app/schemas/.../8.json` 由 KSP 生成。
+- `TodoDao.updateContent` 加 `tag` 参数。**`TodoRepository` 里重复顺延（rollForward）和撤回归档（undo）两处也各自调了 `updateContent`，必须传 `todo.tag`**，否则顺延一次标签就没了。
+- `BackupCodec` 导出加 `tag`、导入用 `optString("tag", "")` 兼容旧备份；`BackupRules.DB_VERSION` 7→8。
+
+### 58.6 UI
+
+- 预览卡片 `FlowRow` 里紧跟「每天 / 每周」加一个标签 chip：有值显示标签文字、无值显示「+ 标签」，点开 `AlertDialog` 编辑，留空 = 清空（`tagOverrides` 记 null，不能退回解析值）。样式沿用 `InfoChip` 的实底 `secondaryContainer`，不另造一种 chip。
+- 列表右侧新增 `TagBadge`，与 `RepeatBadge` 同形状字号，用 `tertiaryContainer` 区分「重复计划」和「分类标签」，`widthIn(max = 80.dp)` + 省略号防长标签把日期挤没。
+- ★ 原来整个右侧 `Row` 包在 `todo.dueAtMillis?.let {}` 里，**无日期待办连徽章行都不渲染**。本轮把徽章提到判空外面、只让状态文字和日期留在 `let` 里，无日期待办的标签才看得见。归档列表复用 `TodoRow`，自动跟随。
+- 小组件第一版不显示标签（它本来就只显示标题）；标签筛选 / 标签库 / 颜色分类不做。
+
+### 58.7 验证与遗留
+
+- `:app:testDebugUnitTest` 通过（含新增 `TagRulesTest` 与 Parser 标签用例）；`:app:assembleRelease` 通过，KSP 生成 `8.json`、R8 全开正常。
+- **真机装机未做**：adb 枚举设备为空（重启服务仍无设备），release 包已出但没装到 vivo 上。连上设备后需覆盖安装（会真实跑 v7→v8 迁移）、看冷启动有无 Room 异常，再验标签 chip / 徽章 / 编辑态 / 无日期 / 重复顺延 / 备份恢复。
+- 按 AGENTS §5，本轮是**日常功能改动，版本号不动、不发版**，不碰 Release / Hexo / 博客文章。功能需同时落到 `release/vivo-store`。

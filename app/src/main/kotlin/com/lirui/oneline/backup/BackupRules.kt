@@ -21,8 +21,8 @@ object BackupRules {
     const val FORMAT = "oneline-backup"
     const val VERSION = 1
     const val MIN_SUPPORTED_VERSION = 1
-    /** 与 AppDatabase 的 `@Database(version = 7)` 对齐；加迁移时两边一起改。 */
-    const val DB_VERSION = 7
+    /** 与 AppDatabase 的 `@Database(version = 8)` 对齐；加迁移时两边一起改。 */
+    const val DB_VERSION = 8
     const val MIME_TYPE = "application/json"
 
     const val SETTINGS_PREF = "oneline_settings"

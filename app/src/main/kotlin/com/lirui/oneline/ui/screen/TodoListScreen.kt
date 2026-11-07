@@ -55,6 +55,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -813,7 +814,12 @@ private fun TodoAppContent(
                     }
                 }
             },
-            onPreview = { vm.parse(it) },
+            onPreview = { t ->
+                // v1.0.15：编辑态锚定库里的详情/标签，句子重解析不该把它们洗掉。
+                val target = editTarget
+                if (target != null) vm.parseForEdit(t, target.detail, target.tag)
+                else vm.parse(t)
+            },
             parses = vm.lastParses,
             editing = editTarget != null,
             initialRepeatDays = editTarget?.repeatDays ?: 0
@@ -3364,29 +3370,38 @@ private fun TodoRow(
                     )
                 }
             }
-            // Right-hand meta: only the repeat badge + the date.
-            todo.dueAtMillis?.let { due ->
+            // Right-hand meta: 重复徽章 + 标签徽章 + 日期。
+            // v1.0.15：徽章不再挂 dueAtMillis 判空 —— 无日期待办同样能带标签，
+            // 以前整行不渲染，标签/重复徽章会一起凭空消失。
+            val repeat = repeatLabel(todo.repeatDays)
+            val tag = todo.tag.trim().takeIf { it.isNotEmpty() }
+            if (repeat != null || tag != null || todo.dueAtMillis != null) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier.padding(start = 10.dp)
                 ) {
-                    repeatLabel(todo.repeatDays)?.let { RepeatBadge(it) }
-                    // 时间段状态：进行中 / 最后一天 / 还剩N天 / 逾期。单日不显示。
-                    Format.rangeStatus(todo.startAtMillis, due, today, now, todo.hasExactTime)?.let { status ->
+                    repeat?.let { RepeatBadge(it) }
+                    tag?.let { TagBadge(it) }
+                    todo.dueAtMillis?.let { due ->
+                        // 时间段状态：进行中 / 最后一天 / 还剩N天 / 逾期。单日不显示。
+                        Format.rangeStatus(
+                            todo.startAtMillis, due, today, now, todo.hasExactTime
+                        )?.let { status ->
+                            Text(
+                                status,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                color = if (overdue) cs.error else cs.primary
+                            )
+                        }
                         Text(
-                            status,
-                            style = MaterialTheme.typography.labelSmall,
+                            Format.monthDayRange(todo.startAtMillis, due),
+                            style = MaterialTheme.typography.bodySmall,
                             maxLines = 1,
-                            color = if (overdue) cs.error else cs.primary
+                            color = if (overdue) cs.error else cs.onSurfaceVariant
                         )
                     }
-                    Text(
-                        Format.monthDayRange(todo.startAtMillis, due),
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        color = if (overdue) cs.error else cs.onSurfaceVariant
-                    )
                 }
             }
         }
@@ -3413,6 +3428,29 @@ private fun RepeatBadge(text: String) {
             text,
             style = MaterialTheme.typography.labelSmall,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
+    }
+}
+
+/**
+ * v1.0.15 末尾标签徽章。和 [RepeatBadge] 同形状、同字号，用 tertiaryContainer 区分
+ * 「重复计划」与「分类标签」；宽度封顶 80dp + 省略号，避免长标签把右侧日期挤没。
+ */
+@Composable
+private fun TagBadge(text: String) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .widthIn(max = 80.dp)
+                .padding(horizontal = 6.dp, vertical = 2.dp)
         )
     }
 }

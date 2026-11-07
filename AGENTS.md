@@ -33,7 +33,7 @@
 | 语言 / UI | Kotlin；Jetpack Compose + **Material 3 Expressive**（`MaterialExpressiveTheme`） |
 | BOM / M3 | `compose-bom:2026.06.01`；`material3:1.5.0-alpha17`（**alpha，别随手升级**） |
 | 基础库 | `core-ktx 1.16.0`、`activity-compose 1.13.0`、`lifecycle 2.9.0`、`coroutines-android 1.11.0` |
-| 存储 | Room `2.8.4`（schema **v7**）+ SharedPreferences；**无 Hilt / 无 Gson / 无 Moshi**，JSON 用平台 `org.json` |
+| 存储 | Room `2.8.4`（schema **v8**）+ SharedPreferences；**无 Hilt / 无 Gson / 无 Moshi**，JSON 用平台 `org.json` |
 | 后台 | WorkManager `2.11.2`、AlarmManager 精确闹钟、BroadcastReceiver |
 | SDK / 构建 | minSdk 26 / target & compile 36 / JDK 17 / Gradle 9.5.0（无 wrapper）；R8 全开 |
 | 导航 | 单 Activity，Compose 内部 4 tab + 专注覆盖层 |
@@ -186,7 +186,7 @@
 
 - 构建前 `export JAVA_HOME="C:/Users/lirui/.jdks/jdk17.0.20_12"`（否则被 VS Code 扩展 JRE 劫持、jlink 报错），先 `gradle --stop` 再用 Gradle 9.5.0 绝对路径。
 - 调用 adb 前 `export MSYS_NO_PATHCONV=1`；主力机 vivo V2324HA `10AE721UXN000QG`（Android 15）。
-- ★ Room 加列必须 `DEFAULT NULL` + `hasColumn` 幂等（0.9.3 漏 `DEFAULT` 秒崩）；schema 变更要跑 `:app:connectedDebugAndroidTest` 的 `MigrationTestHelper` 迁移链测试。
+- ★ Room 加列必须**显式写与实体 `@ColumnInfo(defaultValue)` 一致的 DEFAULT**（可空列 `DEFAULT NULL`，非空串列 `DEFAULT ''`）+ `hasColumn` 幂等（0.9.3 漏 `DEFAULT` 秒崩）；schema 变更要跑 `:app:connectedDebugAndroidTest` 的 `MigrationTestHelper` 迁移链测试，并同步 `BackupRules.DB_VERSION` 与 `app/schemas/.../<v>.json`。
 - 判定 / 阈值 / 格式化放**无 Android 依赖的纯函数**才能本地单测；`org.json` 在本地单测里是 stub，编解码只能真机验。
 - **验收别截图**：看 `adb logcat -s TodoWidget:D`、`uiautomator dump` 的文本 bounds；交互用 `adb shell input tap`。
 - ★ 锁屏安装必失败 `INSTALL_FAILED_ABORTED`；查 `dumpsys window | grep mDreamingLockscreen`，UI 验收必须解锁。

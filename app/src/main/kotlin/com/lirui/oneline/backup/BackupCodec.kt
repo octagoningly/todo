@@ -24,8 +24,8 @@ data class BackupData(
  * ```
  * {
  *   "format": "oneline-backup", "version": 1,
- *   "exportedAtMillis": ..., "dbVersion": 7,
- *   "todos": [ { id, title, detail, dueAtMillis, startAtMillis, endAtMillis,
+ *   "exportedAtMillis": ..., "dbVersion": 8,
+ *   "todos": [ { id, title, detail, tag, dueAtMillis, startAtMillis, endAtMillis,
  *                hasExactTime, repeatDays, archived, createdAt, completedAt, deletedAt } ],
  *   "focusSessions": [ { id, label, startedAtMillis, endedAtMillis,
  *                        plannedSeconds, actualSeconds, completed, createdAt } ],
@@ -91,6 +91,8 @@ object BackupCodec {
                 id = o.optLong("id", 0L),
                 title = title,
                 detail = o.optString("detail", ""),
+                // 旧备份没有 tag 字段：缺省空串 = 无标签，老数据恢复后行为不变。
+                tag = o.optString("tag", ""),
                 dueAtMillis = o.longOrNull("dueAtMillis"),
                 startAtMillis = o.longOrNull("startAtMillis"),
                 endAtMillis = o.longOrNull("endAtMillis"),
@@ -180,6 +182,7 @@ object BackupCodec {
         .put("id", t.id)
         .put("title", t.title)
         .put("detail", t.detail)
+        .put("tag", t.tag)
         .putNullableLong("dueAtMillis", t.dueAtMillis)
         .putNullableLong("startAtMillis", t.startAtMillis)
         .putNullableLong("endAtMillis", t.endAtMillis)

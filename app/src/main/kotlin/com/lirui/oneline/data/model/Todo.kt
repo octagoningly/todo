@@ -8,8 +8,9 @@ import androidx.room.PrimaryKey
  * A single reminder todo item.
  *
  * - [title]: the parsed description (time/date tokens removed).
- * - [detail]: optional free-text detail typed after the event title (everything after the
- *   first space of the remainder), e.g. "组会 要带笔记本去" -> title 组会, detail 要带笔记本去.
+ * - [detail]: optional free-text detail typed after the event title. v1.0.15 起末尾段
+ *   归 [tag]，只有中间段是详情（见 [com.lirui.oneline.parser.TagRules]）。
+ * - [tag]: 单值标签，显示在列表「每天/每周」徽章旁，可在预览卡片编辑。空串 = 无标签。
  * - [dueAtMillis]: the concrete due timestamp (in the device's timezone), or null for a
  *   "no-date" item that never fires a reminder.
  * - [hasExactTime]: whether the user gave an exact minute time (e.g. "15:30" or "下午3点").
@@ -48,5 +49,7 @@ data class Todo(
     @ColumnInfo(defaultValue = "0") val createdAt: Long = System.currentTimeMillis(),
     @ColumnInfo(defaultValue = "0") val completedAt: Long? = null,
     /** 见类注释：未使用的历史列，只为保住 DB 版本号。 */
-    @ColumnInfo(defaultValue = "NULL") val deletedAt: Long? = null
+    @ColumnInfo(defaultValue = "NULL") val deletedAt: Long? = null,
+    /** v1.0.15 末尾标签；DB v7→v8 加列，老数据默认空串。 */
+    @ColumnInfo(defaultValue = "") val tag: String = ""
 )

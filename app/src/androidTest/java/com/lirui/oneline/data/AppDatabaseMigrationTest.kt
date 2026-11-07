@@ -10,7 +10,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Room 迁移链 v1 → v7 的真机测试（v1.0.10 补）。
+ * Room 迁移链 v1 → v8 的真机测试（v1.0.10 补，v1.0.15 续）。
  *
  * 为什么非要 instrumented test：迁移是否写对，取决于 **PRAGMA table_info 里读到的
  * 实际列定义**，不是 Kotlin 实体长什么样。0.9.3 那次「迁移完秒崩」就是因为
@@ -37,9 +37,9 @@ class AppDatabaseMigrationTest {
 
     private val dbName = "migration-test"
 
-    /** 全链 v1→v7：老待办不能丢，六个版本加进来的列都得在，新表建得出来。 */
+    /** 全链 v1→v8：老待办不能丢，各版本加进来的列都得在，新表建得出来。 */
     @Test
-    fun migrate1To7_preservesTodosAndAddsAllColumns() {
+    fun migrate1To8_preservesTodosAndAddsAllColumns() {
         helper.createDatabase(dbName, 1).apply {
             execSQL(
                 "INSERT INTO todos " +
@@ -50,7 +50,7 @@ class AppDatabaseMigrationTest {
         }
 
         val db = helper.runMigrationsAndValidate(
-            dbName, 7, true, *AppDatabase.ALL_MIGRATIONS
+            dbName, 8, true, *AppDatabase.ALL_MIGRATIONS
         )
 
         // 老数据还在，且没被迁移改写。
@@ -62,7 +62,7 @@ class AppDatabaseMigrationTest {
 
         // 每个版本新加的列都存在（Room 的 validate 会另外核对类型 / NOT NULL / 默认值）。
         val expected = listOf(
-            "detail", "repeatDays", "startAtMillis", "deletedAt", "endAtMillis"
+            "detail", "repeatDays", "startAtMillis", "deletedAt", "endAtMillis", "tag"
         )
         val actual = mutableListOf<String>()
         db.query("PRAGMA table_info(todos)").use { c ->
@@ -70,7 +70,7 @@ class AppDatabaseMigrationTest {
             while (c.moveToNext()) actual += c.getString(nameIdx)
         }
         expected.forEach { col ->
-            assertTrue("v7 缺少列 $col", col in actual)
+            assertTrue("v8 缺少列 $col", col in actual)
         }
 
         // v6→v7 建的专注表：结构由 runMigrationsAndValidate 校验，这里确认能查。
@@ -114,6 +114,29 @@ class AppDatabaseMigrationTest {
         db.query("SELECT COUNT(*) FROM focus_sessions").use { c ->
             assertTrue(c.moveToFirst())
             assertEquals(0, c.getInt(0))
+        }
+        db.close()
+    }
+
+    /**
+     * v1.0.15：tag 的 dflt_value 必须是字符串 `''`，与实体
+     * `@ColumnInfo(defaultValue = "")` 对齐；只写 `ADD COLUMN tag TEXT` 会让 Room
+     * 迁移校验报 "Migration didn't properly handle" —— 和 0.9.3 是同一类坑。
+     */
+    @Test
+    fun migrate7To8_tagHasExplicitDefaultEmptyString() {
+        helper.createDatabase(dbName, 7).apply { close() }
+        val db = helper.runMigrationsAndValidate(
+            dbName, 8, true, AppDatabase.ALL_MIGRATIONS[6]
+        )
+        db.query("PRAGMA table_info(todos)").use { c ->
+            val nameIdx = c.getColumnIndex("name")
+            val dfltIdx = c.getColumnIndex("dflt_value")
+            var defaultValue: String? = null
+            while (c.moveToNext()) {
+                if (c.getString(nameIdx) == "tag") defaultValue = c.getString(dfltIdx)
+            }
+            assertEquals("''", defaultValue)
         }
         db.close()
     }
