@@ -11,7 +11,6 @@ import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -213,12 +212,10 @@ fun AboutScreen(
     // 同理：动画时间也只在 draw 阶段读（Canvas 里），否则每帧整页重组。
     val animationTime = rememberAboutAnimationTime()
 
-    // 页面推入：淡入 + 从下往上 28dp。不用整屏缩放 —— 缩放会把根节点的 surface 边缘
-    // 露出来，看起来像一张缩小的卡片而不是"翻到下一页"。
-    val enter = remember { Animatable(0f) }
-    LaunchedEffect(Unit) {
-        enter.animateTo(1f, spring(dampingRatio = 0.85f, stiffness = 520f))
-    }
+    // ★ 2026-11-07（§61）：这里原本有一份「淡入 + 从下往上 28dp」的整页推入动画
+    //   （§30 动效补齐时加的）。但 tab 内容是 `when(tab)` 直接替换，另外三页都没有整页
+    //   入场动画，只有关于页每次切进来都「从下面升上来」，观感不一致 —— 已撤掉。
+    //   四页统一硬切；顶栏标题的 Crossfade 与 FAB 的 fade 保持不变。
 
     val pkgInfo = remember {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull()
@@ -264,12 +261,10 @@ fun AboutScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .graphicsLayer {
-                alpha = enter.value
-                translationY = (1f - enter.value) * 28.dp.toPx()
-            }
-            // 不透明底色 + 消费点击：关于页是叠在 Scaffold 之上的覆盖层，
-            // 不吞掉触摸的话，hero 那块空白区域的点击会穿透到下面的 FAB。
+            // 不透明底色 + 消费点击：根 Box 自己吃掉 hero 空白区的触摸，
+            // 渐变背景淡出时也不会露出下层 surface 的边缘。
+            // ★ v0.4 起关于页是第四个导航 tab，不再是覆盖层；FAB 也只在 Todo 页显示
+            //   （旧注释「叠在 Scaffold 之上 / 穿透到下面的 FAB」已不成立）。
             .background(cs.surface)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },

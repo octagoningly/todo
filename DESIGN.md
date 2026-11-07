@@ -1602,6 +1602,10 @@ detail`，用 `try/catch` 捕获异常。跑完即删。**未改任何产品代�
 
 ## 30. 动效补齐（2026-10-22）
 
+> ⚠ **勘误（2026-11-07）**：§30.1 表格里「关于页：淡入 + 从下往上 28dp 的推入」
+> **已在 §61 撤掉**。当时只给关于页补了整页入场动画、没统一处理 tab 切换，
+> 结果四个 tab 里只有关于页「从下面升上来」。本节保留作历史记录。
+
 主题早就设了 `MaterialExpressiveTheme(motionScheme = MotionScheme.expressive())`，但页面里
 实际只有两处动效（完成圆圈的 600ms 弧线、板块拖动的 spring）。本轮把**所有硬切**都补上。
 
@@ -4723,3 +4727,53 @@ zuige 看过 §59 的效果后直接否掉：「这样不太好，我的初衷�
 - **Manifest 与关于页零改动**：无 `INTERNET`；`ACCESS_NETWORK_STATE` 仍是 `tools:node="remove"`；无 `REQUEST_INSTALL_PACKAGES` / `FOREGROUND_SERVICE_DATA_SYNC` / FileProvider / `update/` / `UpdateDialog.kt` / 检查更新行。合规分支 3 个上架材料（`PrivacyScreen.kt` / `SettingsRepo.kt` / `docs/PRIVACY.md`）保持未提交、原样保留。
 - 两条分支的 `AGENTS.md §6.4` 同步改成「本地脚本验收」（见 §60.6），覆盖旧规矩「直接装机验证」。
 - 两边 `:app:testDebugUnitTest` + `:app:assembleRelease` 均 `EXIT=0`，**未装机**。
+
+---
+
+## §61 撤掉关于页的整页推入，四个 tab 统一硬切（2026-11-07）
+
+### 61.1 现象与根因
+
+zuige：「我发现关于页面跟其他页面的进入方式好像不一样，关于页面是从下向上来的」。
+
+- `AboutScreen.kt` 自带一份**整页入场动画**：`Animatable(0f)` + `LaunchedEffect(Unit)` 播
+  `spring(dampingRatio = 0.85f, stiffness = 520f)`，根 Box 的 `graphicsLayer` 同时改
+  `alpha` 与 `translationY = (1f - enter.value) * 28.dp` → 淡入 + 从下往上 28dp。
+- tab 内容是 `TodoListScreen.kt` 的 `when(tab)` **直接替换**，没有过渡；AboutScreen 每次切进来
+  都重新进入组合，于是每次都重播一次「上升」。另外三页没有整页入场动画
+  （顶栏标题只有 `Crossfade(180ms)`、FAB 只有 `fadeIn/fadeOut`）。
+- 源头是 §30（2026-10-22「动效补齐」）刻意补的第七处：当轮想把「所有硬切」都补上，
+  但只挑了关于页加整页推入，没动 tab 切换本身，留下不对称。§30 里 FAB 的 `scaleOut`
+  后来也因方形阴影问题撤掉了 —— 同一批动效并非都留到了今天。
+
+### 61.2 拍板与四级实现顺序结论（AGENTS §2）
+
+zuige 选「**去掉推入，四页统一硬切**」。
+
+1. **复用旧模块**：`TodoListScreen` 里已有的 `Crossfade` / `AnimatedContent`、M3
+   `MaterialExpressiveTheme(motionScheme = MotionScheme.expressive())`；本轮不需要新增动画。
+2. **Google 官方**：全是官方动画组件，没有自绘控件、没有新依赖。
+3. **开源参考**：不适用，没有可借鉴的算法。
+4. **手写**：不需要手写新逻辑，只是删除既有调用；纯函数 / 数据层 / 存储层零改动。
+
+### 61.3 改动清单
+
+- `AboutScreen.kt`：删 `Animatable` import、删入场动画块（`enter` + `LaunchedEffect`）、
+  删根 Box `graphicsLayer` 里的 `alpha` / `translationY` 两行。
+  ★ `spring` / `LaunchedEffect` / `graphicsLayer` 在文件里还有别处用（展开区弹簧、动画时钟、
+  hero 淡出、箭头旋转），**只删 `Animatable` 这一个 import**。
+- 保留 `.background(cs.surface)` 与 `.clickable(...)`（消费 hero 空白区触摸、避免渐变淡出时
+  露出下层 surface 边缘），但订正过时注释：原写「关于页是叠在 Scaffold 之上的覆盖层 /
+  点击会穿透到下面的 FAB」，既与文件头「v0.4 起是第四个导航项」自相矛盾，
+  也和 FAB 只在 Todo 页显示的事实不符。
+- `DESIGN.md`：§30 加勘误、本节追加；不改 `README.md`（没有描述该动效）、不改 `AGENTS.md`
+  （规矩未变）、不改 `docs/PRIVACY.md`（无权限 / 数据变化）。
+
+### 61.4 验证与收尾
+
+- 按 §60.6 起的新口径**只跑本地脚本**：`:app:compileDebugKotlin` / `:app:testDebugUnitTest` /
+  `:app:assembleRelease`，不连设备、不装机、不 tap / dump。
+- 按 AGENTS §5：版本号不动、不发版，不碰 Release / Hexo / 博客文章。
+- 按 AGENTS §4：功能改动在两条分支各落一次。合规分支的 `AboutScreen.kt` 内容不同
+  （不联网版没有检查更新逻辑），`cherry-pick -n` 撞冲突时按「本分支缺什么就别带什么」
+  手工解，DESIGN / README 回退本分支版本后逐处改写；Manifest 边界重新核对。
