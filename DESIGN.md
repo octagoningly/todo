@@ -4486,6 +4486,9 @@ zuige 要求「blog 源也更新，文章里面的下载也更新」。改动落
 
 ## §58 一句话末尾标签（v1.0.15 开发中，2026-11-07）
 
+> ⚠ **勘误（2026-11-07 同日）**：本节的「末尾段即标签」口径**已被 §59 推翻**，
+> 改为显式 `#标签`。本节保留作历史决策记录，实现与语义一律以 §59 为准。
+
 ### 58.1 需求与拍板口径
 
 zuige：「一句话待办最后可以加上标签，用逗号或空格隔开，比如『作业』；标签显示在跟『每天』『每周』相同的位置，也可以编辑；标签一条一个。」
@@ -4538,3 +4541,96 @@ zuige：「一句话待办最后可以加上标签，用逗号或空格隔开，
   ★ 搬运时撞 8 处冲突，根因是合规分支基线落后 25 个提交、缺 `backup/` / `update/` / `AGENTS.md` /
   instrumented 迁移测试；逐项取舍记在合规分支 `DESIGN.md §58.2`，`AGENTS.md §4` 也补了对应提醒。
   两边 `:app:testDebugUnitTest` 与 `:app:assembleRelease` 均通过。
+
+---
+
+## §59 改成显式 `#标签`（v1.0.15 二次拍板，2026-11-07）
+
+### 59.1 为什么要推翻刚拍的板
+
+§58 落地后复盘发现三个问题同源 —— 「末尾段」同时被「标签」和「详情」抢：
+
+1. **P0 编辑态吞字**：`Format.editSentence` 回填的句子是「标题 详情 日期 时刻」，不含标签；
+   编辑态 `onValueChange` 会 `parseForEdit` 重解析整句，末尾段被 `TagRules` 当标签吃掉，
+   随后又被钉回库值 —— 用户在编辑框里新打的字**静默消失**；标题含空格时甚至会把后半截
+   标题洗掉（「交 数学作业」保存后只剩「交」）。真机复现路径见 §59.5。
+2. **详情槽被占死**：两段输入（「交作业 带电脑」）的末尾段恒为标签，`detail` 永远为 null，
+   v0.7 起「标题 详情」的用户习惯全被打断，想写详情只能点两次 chip。
+3. **两套切分规则长期并存**：§58 用 `parseForEdit` 把详情 / 标签钉回库值打补丁，
+   添加态与编辑态各跑一套语义，正是项目反复踩的「两处各写一遍导致漂移」。
+
+zuige 2026-11-07 二次拍板：**只有带 `#` 的段才是标签，其余段回归 v0.7 语义**。
+v1.0.15 尚未发版，是改语法的唯一低成本窗口；发出去后再改要背兼容包袱。
+
+### 59.2 四级实现顺序结论（AGENTS §2）
+
+1. **复用旧模块**：`Parser.splitTokens` / `TagRules`（纯函数）/ `ParsedTodo` / `Format.editSentence`
+   往返机制 / 手动覆盖表（`tagOverrides` 那套）/ `InfoChip` + `AlertDialog` / `TagBadge` /
+   `RangeMerge`（`base.copy` 自动带 tag）/ `BackupCodec` / Room `MIGRATION_7_8`。
+2. **Google 官方**：M3 `OutlinedTextField` 的 `supportingText` + `isError` 做长度即时提示；
+   没有自绘控件、没有新依赖、Room 迁移链一行未动。
+3. **开源参考**：不适用。中文标签语法没有可借鉴的实现。
+4. **手写**：只在 `TagRules` 里手写「`#` 段识别 / 紧贴写法 / code point 安全截断」这些
+   无 Android 依赖的纯判定，并补 JVM 单测。理由同 §58.2（项目没有 Robolectric）。
+
+### 59.3 新口径与改动清单
+
+| 规则 | 说明 |
+| --- | --- |
+| `#作业` / `交作业#作业` | 标签（`normalize` 抹 `#`、只取第一个词） |
+| 无 `#` | 没有标签；第一段 = 标题，其余全部 = 详情（v0.7 语义） |
+| 多个 `#` 段 | 取最后一个；前面的 `#` 段不丢它前面的文字 |
+| 只有 `#` 段 | 标题空，`addParsed` 判 Blank、UI 禁用提交 |
+| 长度 | `MAX_LENGTH` 20 → **8**（徽章只有 80dp，20 字全是省略号） |
+
+- `TagRules`：`split` 重写为「先摘 `#` 段、再按 v0.7 分标题 / 详情」；`normalize` 抹 `#` 前缀、
+  按 Unicode **code point** 截断（`take(20)` 会把 emoji 代理对切半，徽章乱码）；新增 `MARK`。
+- `Parser`：`peelBlockedPrefix` 加 `#` —— 「日期在中间」兜底会把 `#周一` 扫成「#」+ 周一，
+  标签被吞。`splitTokens` 故意**不**把 `#` 当分隔符，否则标签信息会丢。
+- `Format.editSentence` 加 `tag` 参数，非空时回填成 `#tag`（放在详情后、日期前）；
+  无日期 / 无精确时刻的提前 return 分支同样带回标签。
+- `MainViewModel`：**删掉 `parseForEdit`**，编辑态与添加态共用 `parse`；`previewExisting` 不变。
+  `TodoListScreen.onPreview` 简化成 `vm.parse(t)`，`initialText` 传 `tag = it.tag`。
+- `AddSheet` 标签编辑框改用 M3 `supportingText`：输入「课外 作业」或超长时即时标红提示
+  「只保留第一个词、最多 8 字」，不再保存后才静默截断。
+- `TodoRepository.kt` 顺手修正 `undoFromNotification` 里 `tag = todo.tag` 的缩进（纯格式）。
+- `ParsedTodo` / `Todo` / `README` 注释与说明同步；Room v8 迁移、备份编解码**一个字没动**
+  （`tag` 字段与存储格式不变，只是产生它的规则变了，老数据天然兼容）。
+
+### 59.4 测试
+
+- `TagRulesTest` 全量重写：无 `#` → 详情、紧贴写法、句首 / 句中 `#`、多 `#` 取最后、
+  裸 `#` 不算标签、只有 `#` 时空标题、normalize 的 `#` 前缀 / 限长 / emoji 代理对。
+- `ParserTest`：把 §58 改成 `tag` 的 5 处 `detail` 断言全部订正回来；
+  `parseAll_editSentence_roundTripsToSingleTodo` 不再把「详情1」断言成标签
+  （§58 等于把错位固化进测试）；标签用例整段重写；新增
+  `editSentence_withTag_roundTrips` / `editSentence_noDate_withTag_roundTrips` /
+  `tag_editingNewWordIsNotSwallowed`（P0 回归）/ `tag_hashWeekdayIsNotParsedAsDate`。
+- `:app:testDebugUnitTest` `EXIT=0`；`:app:compileDebugKotlin`、`:app:assembleRelease` 均通过，
+  release 包 2,093,308 字节。
+
+### 59.5 真机验收（vivo V2324HA / Android 15）
+
+- 设备在线后**锁屏直装与 `pm install` 都被 `INSTALL_FAILED_ABORTED` 拒绝**，
+  `input keyevent 82`（MENU）解滑动锁后 `adb install -r` 成功 —— 与 §58.7「adb 无设备」
+  的记录不同，本轮补上了。
+- 冷启动：进程存活、`MainActivity` +211ms 显示，logcat 无 `Migration didn't properly handle`
+  / FATAL / Room 异常。
+- `#` 紧贴写法：`test#work` → 预览标题「test」+ 标签 chip「work」+「+ 详情」✓
+- 无 `#`：`test` →「+ 标签」chip，不凭空造标签 ✓
+- 编辑回填：已有「交作业 / 标签作业」→ 输入框 `交作业 #作业 11月8日 14点` ✓
+- **P0 回归**：编辑框末尾追加 `more` → 预览详情显示「more」、标签仍是「作业」，
+  文字没有凭空消失 ✓（§58 会在这里把 `more` 吃掉）
+- 列表已有数据的 `TagBadge`（「作业」）正常渲染；全程只读，未提交、未改动任何用户数据。
+
+⚠ **仍未真机触发的两项**：设备里已有 v8 数据（列表能看到 §58 建的标签），
+  这次覆盖安装**没有跑 v7→v8 迁移**；要真机验迁移得清数据或换一台干净设备，
+  不能拿用户数据冒险。迁移链目前只有 instrumented `MigrationTestHelper` 覆盖
+  （含 §58.5 的 `dflt_value == "''"` 断言）。备份恢复 / 重复顺延标签不丢本轮也未真机验
+  （前者要 SAF 选文件，后者会改动用户数据），代码层 §58.5 已覆盖。
+
+### 59.6 双分支与收尾
+
+- 按 AGENTS §4，功能改动在 `main` 与 `release/vivo-store` 各落一次；版本号仍 `1.0.14 / 48`
+  不递增、不发版，不碰 Release / Hexo / 博客文章（§5）。
+- `docs/PRIVACY.md` 两边都不用改：标签只是本机数据字段，没有新权限、没有联网。

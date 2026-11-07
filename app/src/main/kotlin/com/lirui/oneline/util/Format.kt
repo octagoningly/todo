@@ -1,5 +1,6 @@
 package com.lirui.oneline.util
 
+import com.lirui.oneline.parser.TagRules
 import java.time.LocalDate
 import java.util.Locale
 
@@ -211,6 +212,8 @@ object Format {
      * [endAtMillis] 非空（#1 时间区间）时，时刻写成「15点到17点」而不是「15点」——
      * 否则一保存，结束点就丢了（区间退化成普通待办）。用 24 小时制裸数字，不拼「下午」：
      * 「下午3点到5点」与「15点到17点」解析结果一致，后者没有时段词歧义。
+     * - v1.0.15（§59）：[tag] 非空时写成 `#tag`（放在详情后、日期前），编辑态用同一套
+     *   Parser 就能把标题 / 详情 / 标签一起读回；没有 `#` 时句子与旧版逐字相同。
      */
     fun editSentence(
         title: String,
@@ -219,12 +222,19 @@ object Format {
         due: Long?,
         hasExactTime: Boolean = true,
         today: LocalDate = AppTime.today(),
-        endAtMillis: Long? = null
+        endAtMillis: Long? = null,
+        tag: String = ""
     ): String = buildString {
         append(title)
         if (detail.isNotBlank()) {
             append(" ")
             append(detail)
+        }
+        val normalizedTag = TagRules.normalize(tag)
+        if (normalizedTag.isNotBlank()) {
+            append(" ")
+            append(TagRules.MARK)
+            append(normalizedTag)
         }
         if (due == null) return@buildString
         append(" ")

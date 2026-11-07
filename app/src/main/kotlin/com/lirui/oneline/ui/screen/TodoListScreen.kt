@@ -776,7 +776,7 @@ private fun TodoAppContent(
                 // 回填句子的规则（含"为什么不能拼星期""为什么不能带默认时刻"）见 Format.editSentence。
                 Format.editSentence(
                     it.title, it.detail, it.startAtMillis, it.dueAtMillis, it.hasExactTime,
-                    endAtMillis = it.endAtMillis
+                    endAtMillis = it.endAtMillis, tag = it.tag
                 )
             } ?: "",
             onDismiss = {
@@ -815,10 +815,8 @@ private fun TodoAppContent(
                 }
             },
             onPreview = { t ->
-                // v1.0.15：编辑态锚定库里的详情/标签，句子重解析不该把它们洗掉。
-                val target = editTarget
-                if (target != null) vm.parseForEdit(t, target.detail, target.tag)
-                else vm.parse(t)
+                // v1.0.15（§59）：editSentence 会回填 #tag，编辑态与添加态共用同一套 parse。
+                vm.parse(t)
             },
             parses = vm.lastParses,
             editing = editTarget != null,

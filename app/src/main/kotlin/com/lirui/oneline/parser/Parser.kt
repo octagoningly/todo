@@ -278,7 +278,7 @@ class Parser(
             todayTimePast = false
         }
 
-        // v1.0.15：一段 = 纯标题；两段以上最后一段是标签、中间段才是详情。
+        // v1.0.15（§59）：只有带 # 的段是标签，其余段第一段=标题、之后全是详情。
         // 切分规则全部收敛在 TagRules（纯函数、可单测），这里只负责传文字段。
         val parts = acc.title.map { it.trim() }.filter { it.isNotEmpty() }
         val split = TagRules.split(parts)
@@ -337,7 +337,7 @@ class Parser(
         }
         if (dates.size <= 1) return listOf(parse(input))
 
-        // v1.0.15：与 parse() 共用同一套切分，多日期时每条待办带同一个标签。
+        // v1.0.15（§59）：与 parse() 共用同一套切分，多日期时每条待办带同一个 # 标签。
         val split = TagRules.split(acc.title.map { it.trim() }.filter { it.isNotEmpty() })
         val time = acc.time
 
@@ -587,7 +587,11 @@ class Parser(
      * 前缀里出现这些词，说明 token 是**语法写法**而不是"文字 + 日期"，[peelTitlePrefix] 必须放过：
      * 「到下周三」是开区间、「从24日起3天内」是时长 —— 剥掉前缀会把「到」「从」变成标题文字。
      */
-    private val peelBlockedPrefix = rangeConnectors + listOf("从")
+    /**
+     * `#` 也要挡：v1.0.15（§59）的显式标签 token（`#周一` / `#3天内`）不是「文字 + 日期」
+     * 写法，否则 [peelTitlePrefix] 会把它扫成「#」+ 日期，标签被拆成半个日期吞掉。
+     */
+    private val peelBlockedPrefix = rangeConnectors + listOf("从", "#")
 
     /**
      * 左半只写了「X月X日」/「X日」（没给年份）时，整段需要**整体**前移的周期。

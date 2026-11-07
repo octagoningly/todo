@@ -623,7 +623,7 @@ fun AddSheet(
             )
         }
 
-        // ── 标签编辑（v1.0.15）──
+        // ── 标签编辑（v1.0.15 / §59）──
         // 一条待办一个标签；留空 = 清掉标签（override 记 null，不能退回解析值）。
         if (showTagEditor && pickingIndex in parses.indices) {
             val current = if (tagOverrides.containsKey(pickingIndex)) {
@@ -632,29 +632,36 @@ fun AddSheet(
                 parses[pickingIndex].tag.orEmpty()
             }
             var draft by remember(pickingIndex) { mutableStateOf(current) }
+            // 输入时就把「会被 normalize 收敛掉的部分」提示出来，别等保存后才发现
+            // 「课外 作业」变成了「课外」、超长被截成 8 字。用 M3 自带 supportingText。
+            val rawTag = draft.trimStart('#').trim()
+            val willTrim = rawTag.isNotEmpty() && TagRules.normalize(draft) != rawTag
             AlertDialog(
                 onDismissRequest = { showTagEditor = false },
                 title = { Text("编辑标签") },
                 text = {
-                    Column {
-                        OutlinedTextField(
-                            value = draft,
-                            onValueChange = { draft = it },
-                            singleLine = true,
-                            label = { Text("标签") },
-                            placeholder = { Text("作业") },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Text(
-                            "一条待办一个标签；留空即不设标签",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    OutlinedTextField(
+                        value = draft,
+                        onValueChange = { draft = it },
+                        singleLine = true,
+                        label = { Text("标签") },
+                        placeholder = { Text("#作业") },
+                        isError = willTrim,
+                        supportingText = {
+                            Text(
+                                if (willTrim) "只保留第一个词、最多 ${TagRules.MAX_LENGTH} 字，其余会被截掉"
+                                else "一条待办一个标签；最多 ${TagRules.MAX_LENGTH} 字，留空即不设标签",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (willTrim) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        // 规范化收敛到纯函数：只取第一个词、限长，避免把分隔符带进徽章。
+                        // 规范化收敛到纯函数：抹掉 #、只取第一个词、按 code point 限长。
                         tagOverrides = tagOverrides +
                             (pickingIndex to TagRules.normalize(draft).ifBlank { null })
                         showTagEditor = false
