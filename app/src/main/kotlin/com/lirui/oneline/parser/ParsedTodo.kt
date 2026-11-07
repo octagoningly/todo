@@ -13,10 +13,10 @@ import java.time.LocalTime
  * @param dueTime  the parsed time-of-day; null if only a date was given (=> default 09:00)
  * @param repeatDays  repeat step in days when the item is completed. 0 = no repeat.
  *                    1 = daily, 7 = weekly, 28/30 ≈ monthly. Driven by 每天/每周/每月/每周X.
- * @param detail  the free text between the event and the trailing tag. 详见 [TagRules.split]：
- *                「写报告 带电脑 作业」-> title 写报告, detail 带电脑, tag 作业。
- *                ⚠ v1.0.15 起末尾段归标签，不再并入详情。
- * @param tag     the single trailing tag (v1.0.15). null = 无标签。显示在列表「每天/每周」
+ * @param detail  第一段标题之后的全部文字（v0.7 语义）。详见 [TagRules.split]：
+ *                「写报告 带电脑 #工作」-> title 写报告, detail 带电脑, tag 工作。
+ *                ⚠ v1.0.15（§59）起只有带 `#` 的段是标签，其余段回归详情。
+ * @param tag     显式的单个 `#` 标签 (v1.0.15)。null = 无标签。显示在列表「每天/每周」
  *                徽章旁、预览卡片的 chip 行，可在预览卡片上点开编辑。
  */
 data class ParsedTodo(
@@ -31,7 +31,7 @@ data class ParsedTodo(
     val startDate: LocalDate? = null,
     /** 时间区间的结束时刻（与 [dueTime] 同一天）；null = 无结束时刻。「下午3点到5点」→ 15:00~17:00。 */
     val endTime: LocalTime? = null,
-    /** 末尾标签（单值、已规范化）；null / 空 = 无标签。见 [TagRules]。 */
+    /** 显式 `#` 标签（单值、已规范化）；null / 空 = 无标签。见 [TagRules]。 */
     val tag: String? = null
 ) {
     /** The sanitized remainder after removing recognized tokens. */

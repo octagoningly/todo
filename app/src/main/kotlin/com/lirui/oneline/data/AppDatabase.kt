@@ -107,7 +107,7 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
-         * v1.0.15：新增 [Todo.tag]（末尾标签）。
+         * v1.0.15：新增 [Todo.tag]（显式 `#` 标签）。
          *
          * ★ 列定义与实体逐字对齐：`TEXT NOT NULL DEFAULT ''` 对应
          *   `@ColumnInfo(defaultValue = "")`。少写 DEFAULT 时 PRAGMA 读到的 dflt_value

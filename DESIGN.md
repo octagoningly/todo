@@ -3387,6 +3387,9 @@ release/vivo-store   404e8b6  国内合规（vivo 商店上架）版，1.0.0 / v
 
 ## §58 一句话末尾标签（合规分支适配，2026-11-07）
 
+> ⚠ **勘误（2026-11-07 同日）**：本节的「末尾段即标签」口径**已被 §59 推翻**，
+> 改为显式 `#标签`。本节保留作合规分支适配的历史记录，实现与语义一律以 §59 为准。
+
 需求口径（zuige）：「一句话待办最后可以加上标签，用逗号或空格隔开，一条一个，显示在跟
 『每天』『每周』相同的位置，也可以编辑。」规则与决策全文见 `main` 分支 `DESIGN.md §58`；
 本节只记**本分支的落地差异**，两边功能表现一致。
@@ -3437,4 +3440,59 @@ UI：预览 `FlowRow` 加可点标签 chip（`tagOverrides`），列表加 `TagB
   已不成立，逐轮 cherry-pick 会越来越容易撞 modify/delete。建议另开一轮决定：
   要么把合规分支整体同步到 main 的功能基线，要么明确它只做上架快照、不再逐功能跟进。
 - 按 AGENTS §5，本轮是日常功能改动，**版本号不动、不发版**，不碰 `latest.json` / 博客文章。
+
+---
+
+## §59 改成显式 `#标签`（v1.0.15 二次拍板，2026-11-07）
+
+> 本节与 main 的 `DESIGN.md §59` 同题，但按**合规分支口径**记录搬运与边界；
+> 主分支那节写的是实现与真机验收全过程，这里只记本分支需要知道的结论。
+
+### 59.1 口径变更与动机
+
+zuige 2026-11-07 二次拍板推翻 §58 的「末尾段即标签」：**只有带 `#` 的段才是标签，
+其余段回归 v0.7 语义（第一段标题、其余详情）**。三个同源问题：
+
+1. **P0 编辑态吞字**：`Format.editSentence` 回填句不含标签，编辑态 `parseForEdit` 重解析时
+   末尾段被当标签吃掉、又被钉回库值，用户新打的字静默消失；标题含空格还会洗掉后半截。
+2. 「标题 详情」的详情槽被占死。
+3. 添加 / 编辑两套切分规则并存，容易漂移。
+
+v1.0.15 未发版，是改语法的唯一低成本窗口。
+
+### 59.2 实现清单（与 main 一致）
+
+- `TagRules` 重写：先摘 `#` 段再按 v0.7 分标题 / 详情；`MAX_LENGTH` 20→**8**；
+  `normalize` 抹 `#` + 按 Unicode code point 截断；紧贴写法 `交作业#作业` 也认；多个 `#` 取最后一个。
+- `Parser.peelBlockedPrefix` 加 `#`，防「日期在中间」兜底把 `#周一` 拆成「#」+ 周一。
+- `Format.editSentence` 加 `tag` 参数回填 `#tag`；**删掉 `MainViewModel.parseForEdit`**，
+  编辑 / 添加共用 `vm.parse`；`TodoListScreen` 的 `onPreview` 简化、`initialText` 传 `tag = it.tag`。
+- `AddSheet` 标签编辑框用 M3 `supportingText` 即时提示「只保留第一个词、最多 8 字」。
+- `TagRulesTest` / `ParserTest` 重写，补编辑往返与 P0 回归用例。
+- Room v8 迁移、备份编解码、`privacy` 相关代码**一行未动**：`tag` 仍是本机一个文本字段，
+  不构成政策实质变更，`PRIVACY_POLICY_VERSION` 不动，`docs/PRIVACY.md` 不用改。
+
+### 59.3 搬运与边界核对（AGENTS §4）
+
+- 从 main `57742b7` 用 `cherry-pick -n` 搬**功能 diff**：13 个文件里代码 11 个全部自动合并，
+  只有 `DESIGN.md` / `README.md` 撞内容冲突 —— 两边历史不同，按 §58.2 的既定做法
+  **回退到本分支版本后逐处改写**，不整文件覆盖。
+- ★ **Manifest 与关于页零改动**：无 `INTERNET` / `ACCESS_NETWORK_STATE` 仍是 `tools:node="remove"` /
+  无 `REQUEST_INSTALL_PACKAGES` / `FOREGROUND_SERVICE_DATA_SYNC` / FileProvider；
+  无 `update/` 模块、无 `UpdateDialog.kt`、关于页无「检查更新」行。
+  `PrivacyScreen` + 首启同意 + 关于页政策入口保持原样。
+- 本分支原有 3 个未提交改动（`PrivacyScreen.kt` / `SettingsRepo.kt` / `docs/PRIVACY.md`）
+  是上架材料，**不进本次提交**，保持原样。
+- 本分支缺 `backup/` / `update/` / instrumented 迁移测试，本次 diff 没碰这些文件，不用做取舍。
+
+### 59.4 验证与遗留
+
+- `:app:testDebugUnitTest`、`:app:compileDebugKotlin`、`:app:assembleRelease` 均通过（本分支）。
+- 真机验收在 **main 的 release 包**上完成（vivo V2324HA）：冷启动无 Room 异常、
+  `test#work` 解析正确、编辑回填 `#作业`、编辑框追加文字不再被吞；全程只读未改用户数据。
+  本分支未单独装机（不联网版本，功能代码一致）。
+- ⚠ 设备里已有 v8 数据，覆盖安装**没有真机触发 v7→v8 迁移**；备份恢复 / 重复顺延标签不丢
+  未真机验。§58.4「真机装机未做（adb 无设备）」对 main 已过时，本分支仍未单独装机。
+- 按 AGENTS §5，本轮是日常功能改动：**版本号不动、不发版**，vivo 商店后台与 `latest.json`
+  / 博客文章都不碰。
 

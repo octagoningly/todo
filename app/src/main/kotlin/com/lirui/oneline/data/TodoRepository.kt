@@ -293,7 +293,7 @@ class TodoRepository(private val context: Context) {
                     id = todo.id,
                     title = todo.title,
                     detail = todo.detail,
-            tag = todo.tag,
+                    tag = todo.tag,
                     dueAtMillis = prev,
                     startAtMillis = prevStart,
                     endAtMillis = prevEnd,

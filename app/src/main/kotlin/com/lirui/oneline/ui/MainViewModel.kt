@@ -53,25 +53,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var lastParses by mutableStateOf<List<ParsedTodo>>(emptyList())
         private set
 
+    /**
+     * 编辑态也走这里（§59）：`Format.editSentence` 会把标签一并回填成 `#tag`，
+     * 同一套 Parser 就能原样读回标题 / 详情 / 标签 —— §58 的 `parseForEdit` 锚定补丁
+     * 已删除。改成显式 `#` 之前，末尾段被当标签吃掉再钉回库值，用户在编辑框里
+     * 新打的字会静默消失。
+     */
     fun parse(text: String) {
         val all = parser.parseAll(text)
-        lastParses = all
-        lastParse = all.firstOrNull()
-    }
-
-    /**
-     * v1.0.15 编辑态专用的句子重解析。
-     *
-     * ★ 为什么要锚定：`Format.editSentence` 回填的句子是「标题 详情 日期 时刻」，
-     *   而新解析规则把**最后一段文字**当标签。编辑时用户改一个字，输入框会重新解析整句
-     *   —— 库里的详情会被洗成标签、标签也会跟着跑偏。编辑态的详情/标签属于「已有数据」，
-     *   不该由句子猜测，所以解析完直接把这两个字段钉回 [Todo] 里的值。
-     *   用户想改标签/详情走预览卡片的 chip（tagOverrides / detailOverrides 优先于解析值）。
-     */
-    fun parseForEdit(text: String, detail: String, tag: String) {
-        val all = parser.parseAll(text).map {
-            it.copy(detail = detail.ifBlank { null }, tag = tag.ifBlank { null })
-        }
         lastParses = all
         lastParse = all.firstOrNull()
     }
