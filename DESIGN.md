@@ -1598,6 +1598,10 @@ detail`，用 `try/catch` 捕获异常。跑完即删。**未改任何产品代�
 
 ## 30. 动效补齐（2026-10-22）
 
+> ⚠ **勘误（2026-11-07）**：§30.1 表格里「关于页：淡入 + 从下往上 28dp 的推入」
+> **已在 §61 撤掉**。当时只给关于页补了整页入场动画、没统一处理 tab 切换，
+> 结果四个 tab 里只有关于页「从下面升上来」。本节保留作历史记录。
+
 主题早就设了 `MaterialExpressiveTheme(motionScheme = MotionScheme.expressive())`，但页面里
 实际只有两处动效（完成圆圈的 600ms 弧线、板块拖动的 spring）。本轮把**所有硬切**都补上。
 
@@ -3544,5 +3548,39 @@ zuige 第三次拍板：不要额外符号，句中写「标签作业」，「�
 - 新增 `SemanticTagFlowTest`（14 条）把原真机验收清单脚本化（用户原话、编辑态追加 / 改值 /
   删标记 / 带日期往返、标记词歧义、`8:30` 冒号、旧 `#` 兼容）；`TagRulesTest` / `ParserTest` 同步重写。
 - v7→v8 真机迁移 / 备份恢复 / 重复顺延标签不丢仍未真机验，同 main §60.7。
+- 按 AGENTS §5：**版本号不动、不发版**，vivo 商店后台与 `latest.json` / 博客文章都不碰。
+
+---
+
+## §61 撤掉关于页整页推入（合规分支适配，2026-11-07）
+
+> 与 main `DESIGN.md §61` 同题；现象、根因与四级实现顺序结论以 main 那节为准，
+> 这里只记本分支的搬运结果与边界核对。
+
+### 61.1 搬运
+
+- zuige 反馈「关于页面跟其他页面的进入方式好像不一样，关于页面是从下向上来的」，
+  拍板「去掉推入，四页统一硬切」。
+- 从 main `2a04a53` 用 `cherry-pick -n` 搬**功能 diff**：`AboutScreen.kt` 自动合并成功
+  （删 `Animatable` import / 入场动画块 / 根 Box 的 `alpha` + `translationY`，订正过时注释），
+  `DESIGN.md` 撞内容冲突 → `git checkout --ours` 回退本分支版本后单独改写，
+  沿用 §59.3 / §60.2 的既定做法。
+- ★ **没有把 main 的关于页整文件覆盖过来**：本分支 `AboutScreen.kt` 里
+  「没有应用内检查更新（v1.0.0 起）」仍在，无 `UpdateService` / `INTERNET` / 检查更新行；
+  合并后已逐项 grep 复核。这是本分支最容易越界的一处。
+
+### 61.2 边界核对（AGENTS §4）
+
+- **Manifest 零改动**：无 `INTERNET`；`ACCESS_NETWORK_STATE` 仍是 `tools:node="remove"`。
+- 无 `update/` 模块、无 `UpdateDialog.kt`；`PrivacyScreen` + 首启同意 + 关于页政策入口保持原样。
+- 纯 UI 动效删除，无新权限 / 无数据类别变化 → `PRIVACY_POLICY_VERSION` 不动、
+  `docs/PRIVACY.md` 不用改。
+- 本分支 3 个上架材料（`PrivacyScreen.kt` / `SettingsRepo.kt` / `docs/PRIVACY.md`）
+  保持未提交、原样保留。
+
+### 61.3 验证与收尾
+
+- 按 §60.4 起的脚本口径：`:app:compileDebugKotlin` / `:app:testDebugUnitTest` /
+  `:app:assembleRelease` 在本分支通过，**不连设备、不装机、不 tap / dump**。
 - 按 AGENTS §5：**版本号不动、不发版**，vivo 商店后台与 `latest.json` / 博客文章都不碰。
 
