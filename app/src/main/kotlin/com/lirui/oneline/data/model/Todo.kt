@@ -51,6 +51,6 @@ data class Todo(
     @ColumnInfo(defaultValue = "0") val completedAt: Long? = null,
     /** 见类注释：未使用的历史列，只为保住 DB 版本号。 */
     @ColumnInfo(defaultValue = "NULL") val deletedAt: Long? = null,
-    /** v1.0.15 末尾标签；DB v7→v8 加列，老数据默认空串。 */
+    /** v1.0.15 显式 # 标签；DB v7→v8 加列，老数据默认空串。 */
     @ColumnInfo(defaultValue = "") val tag: String = ""
 )

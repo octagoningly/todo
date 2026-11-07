@@ -119,7 +119,7 @@ fun AddSheet(
     var titleOverrides by remember { mutableStateOf(mapOf<Int, String>()) }
     var detailOverrides by remember { mutableStateOf(mapOf<Int, String?>()) }
     // v1.0.15 标签覆盖：与 title/detail 同口径 —— 键存在即「用户手动改过」，值为 null 表示清空。
-    // 编辑态的句子重解析由 MainViewModel.parseForEdit 锚定库里的标签，不会被打字洗掉。
+    // 编辑态与添加态共用同一套 parse（editSentence 会回填 #tag），打字不会洗掉库里的标签。
     var tagOverrides by remember { mutableStateOf(mapOf<Int, String?>()) }
     var pickingIndex by remember { mutableIntStateOf(-1) }
     var showDatePicker by remember { mutableStateOf(false) }
@@ -854,7 +854,7 @@ private data class PreviewRow(
     val endTime: java.time.LocalTime?,
     val title: String,
     val detail: String?,
-    /** v1.0.15：末尾标签，null / 空白 = 无标签。 */
+    /** v1.0.15（§59）：显式 # 标签，null / 空白 = 无标签。 */
     val tag: String?
 )
 
