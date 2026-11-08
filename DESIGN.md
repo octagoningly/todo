@@ -5122,7 +5122,13 @@ zuige：「不是啊，我记得那个开源 app 是单独的文字有动效，�
 
 ### 65.5 验证与收尾
 
-- 两边 `:app:testDebugUnitTest` / `:app:assembleRelease` 全 `EXIT=0`，
-  main 388 / 合规 369 条单测 0 失败 0 错误。动效是组合期行为，按 §7 不做真机 UI 验收。
+- 两边 `:app:testDebugUnitTest` / `:app:assembleRelease` 全 `EXIT=0`：
+  main **388** 条 / 合规 **369** 条单测 0 失败 0 错误；产物 main **2,109,692 字节**
+  （10:48）/ 合规 **2,076,404 字节**（10:50）。动效是组合期行为，按 §7 不做真机 UI 验收。
 - 按 §5 版本号不动、不发版；Manifest 零改动，合规分支边界未越。
-- 落地：main 与合规分支各一次提交，见 `git log`。
+- 落地：main `c60d817`、合规分支 `62f9f77`（功能 + 文档各一次提交）。
+- ⚠ **本轮 adb 安装未完成**：按 §6.4「装机允许、操控禁止」只尝试了
+  `adb install -r`，但设备 `10AE721UXN000QG` 未被枚举（`device not found`；
+  `kill-server / start-server / adb usb` 后 `devices -l` 仍为空）。
+  未发任何按键、未 tap / dump / 截图；新包停在 `app/build/outputs/apk/release/`，
+  需重新连接 USB 并解锁授权后再装。
