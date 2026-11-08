@@ -3629,3 +3629,22 @@ zuige 第三次拍板：不要额外符号，句中写「标签作业」，「�
 - 落地：本分支 `612a38d`，对应 main `798996e`。产物 `app-release.apk`
   2,060,020 字节（09:19），版本号不动、未发版、未装机；3 个上架材料仍未提交。
 
+---
+
+## §63 「页面切换动效」设置开关（合规分支适配，2026-11-08）
+
+> 与 main `DESIGN.md §63` 同题；口径、四级结论与两个关键决策以 main 那节为准，
+> 这里只记本分支适配与边界核对。
+
+- 本分支「外观」节结构较短（基线落后，没有专注环动效那四项），开关插在
+  「深色卡片底色」说明之后、`SettingsCard` 结束前；其余 diff 与 main 逐字一致
+  （`Motion.kt` 两个函数、外层 state、`SettingsScreen` 参数链、`reduceMotion` 收口）。
+- ★ 本分支 `SettingsRepo.kt` 有**未提交上架材料**（`PRIVACY_POLICY_VERSION` 1→2），
+  所以开关读写放在 `ui/theme/Motion.kt`，`SettingsRepo` 零改动、材料保持未提交。
+- 边界核对（AGENTS §4）：Manifest 零改动，无 `INTERNET` / `update/` /
+  `UpdateDialog.kt`；关于页「没有应用内检查更新（v1.0.0 起）」仍在；
+  纯 UI 偏好，无新权限 / 无数据类别变化 → `PRIVACY_POLICY_VERSION` 不动、
+  `docs/PRIVACY.md` 不改。
+- 验证：`:app:compileDebugKotlin` / `:app:testDebugUnitTest` / `:app:assembleRelease`
+  全 `EXIT=0`；按 §5 不发版。本轮 adb 安装**只装 main 包**，不装合规分支包。
+

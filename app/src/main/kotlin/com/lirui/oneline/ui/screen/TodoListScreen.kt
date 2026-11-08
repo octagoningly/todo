@@ -146,6 +146,8 @@ import com.lirui.oneline.ui.MainViewModel
 import com.lirui.oneline.ui.CIRCLE_FILL_MILLIS
 import com.lirui.oneline.ui.theme.DarkCardStyle
 import com.lirui.oneline.ui.theme.OnelineMotionEasing
+import com.lirui.oneline.ui.theme.pageMotionEnabled
+import com.lirui.oneline.ui.theme.setPageMotionEnabled
 import com.lirui.oneline.ui.theme.systemReduceMotion
 import com.lirui.oneline.ui.theme.Palette
 import com.lirui.oneline.ui.theme.Palettes
@@ -467,7 +469,10 @@ private fun TodoAppContent(
 
     // ★ §62：系统关掉动画（无障碍「减少动态效果」/ 开发者选项动画时长 0）时，
     //   tab 内容与顶栏标题都直接硬切。
-    val reduceMotion = systemReduceMotion(context)
+    // ★ §63：设置 → 外观 的「页面切换动效」总开关（默认开）也在这里收口；
+    //   系统设置的优先级最高，任一不满足就硬切。
+    var pageMotion by remember { mutableStateOf(pageMotionEnabled(context)) }
+    val reduceMotion = systemReduceMotion(context) || !pageMotion
 
     Box(Modifier.fillMaxSize()) {
         Scaffold(
@@ -633,6 +638,11 @@ private fun TodoAppContent(
                             onSetDefaultMinuteOfDay = onSetDefaultMinuteOfDay,
                             autoRepeat = autoRepeat,
                             onSetAutoRepeat = onSetAutoRepeat,
+                            pageMotion = pageMotion,
+                            onSetPageMotion = { on ->
+                                pageMotion = on
+                                setPageMotionEnabled(context, on)
+                            },
                             onRescheduleReminders = onRescheduleReminders,
                             onExactAlarmSettings = onExactAlarmSettings,
                             onTestNotification = {
@@ -1410,6 +1420,8 @@ private fun SettingsScreen(
     onSetDefaultMinuteOfDay: (Int) -> Unit,
     autoRepeat: Boolean,
     onSetAutoRepeat: (Boolean) -> Unit,
+    pageMotion: Boolean,
+    onSetPageMotion: (Boolean) -> Unit,
     onRescheduleReminders: () -> Unit,
     onExactAlarmSettings: () -> Unit,
     onTestNotification: () -> Unit,
@@ -1648,6 +1660,16 @@ private fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
+                )
+                ItemDivider()
+                // 页面切换动效（§63）：总闸，关掉后四个 tab 与顶栏标题都硬切。
+                // ★ 状态由 TodoListScreen 持有（转场就在那棵 Compose 树里），所以走参数链，
+                //   不像专注环那样在设置页内自读自写 —— 否则开关改了转场不会立刻重组。
+                ToggleItem(
+                    "页面切换动效",
+                    "切换四个 tab 时淡入淡出与轻微滑动；关掉后直接硬切",
+                    pageMotion,
+                    onChecked = onSetPageMotion
                 )
             }
         }
