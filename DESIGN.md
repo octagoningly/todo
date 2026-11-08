@@ -4896,3 +4896,58 @@ ImageToolbox 的整屏滑动是「页面栈推入」语境，照搬会让切 tab
   若 zuige 之后觉得偏慢或偏晃，只改 `OnelineMotionEasing` 与三个 `tween` 参数即可。
 - `basicMarquee` 两端渐隐边缘未做（依赖第三方库），当前短标题不触发滚动。
 - §60 遗留的 v7→v8 真机迁移 / 备份恢复 / 重复顺延标签不丢仍待单独授权（Task #6）。
+
+---
+
+## §63 「页面切换动效」设置开关（2026-11-08）
+
+### 63.1 需求与口径
+
+zuige：「设置里面做一个开关，然后 adb 安装」。给 §62 刚落地的四页转场 + 顶栏文字动效加总闸：
+
+- 位置：设置 → 外观，名称「页面切换动效」，说明「切换四个 tab 时淡入淡出与轻微滑动；关掉后直接硬切」。
+- **默认开**；关掉后两处 `AnimatedContent` 的 spec 变成
+  `EnterTransition.None togetherWith ExitTransition.None`，四页与标题都硬切。
+- ★ 系统「减少动态效果」优先级最高：`reduceMotion = systemReduceMotion(context) || !pageMotion`，
+  任一命中就硬切。
+- 只管 §62 这两处，不动 FAB / 完成条 / 专注环动效等其它动画。
+
+### 63.2 四级实现顺序（AGENTS §2）
+
+1. **复用旧模块**：上一轮的 `ui/theme/Motion.kt`、`systemReduceMotion()`、两处
+   `AnimatedContent.transitionSpec` 收口；设置页已有 `ToggleItem` 与「外观」节，不需要新控件。
+2. **Google 官方**：`remember { mutableStateOf(...) }` + M3 `Switch`（`ToggleItem` 内部即官方
+   `ListItem` / `Switch`）+ `SharedPreferences`。
+3. **开源参考**：不适用，没有可借鉴的算法。
+4. **手写**：无新判定逻辑；纯函数 / 数据层零改动，故不新增 JVM 单测（组合期行为按 §7 走脚本验收）。
+
+### 63.3 两个关键决策
+
+- ★ **状态必须提升到 `TodoListScreen`，走参数链**：转场就在这棵 Compose 树里，
+  若像「专注环动效」那样在设置页内 `remember` 自读自写，改完开关外层不重组，
+  表现就是「拨了没反应」。所以加 `pageMotion: Boolean` + `onSetPageMotion: (Boolean) -> Unit`
+  两个参数，与「沉浸式顶栏」同款。
+- ★ **读写放 `Motion.kt`，不动 `SettingsRepo.kt`**：合规分支的 `SettingsRepo.kt` 有
+  一行未提交上架材料（`PRIVACY_POLICY_VERSION` 1→2），功能提交一旦 `git add` 整个文件
+  就会把它夹带进去。改在上一轮新建的 `ui/theme/Motion.kt` 里读写**同一个**
+  `oneline_settings` 的新键 `page_motion`，两条分支代码逐字一致、`SettingsRepo` 零改动、
+  上架材料保持未提交，也不另建 prefs 文件。
+
+### 63.4 改动清单
+
+- `ui/theme/Motion.kt`：`pageMotionEnabled(context)` / `setPageMotionEnabled(context, on)`
+  （默认 `true`，`apply()` 写盘）。
+- `TodoListScreen.kt`：外层 `var pageMotion by remember { mutableStateOf(...) }`；
+  `reduceMotion` 收口；`SettingsScreen` 加两个参数、调用处传回调；
+  「外观」节在「深色卡片底色」之后加 `ToggleItem`。
+- `README.md`：外观段补一句、设置项一览「外观」行补开关名。
+- 不改 `AGENTS.md` / `docs/PRIVACY.md`（无权限 / 数据类别变化）、不改版本号、不发版。
+
+### 63.5 验证与收尾
+
+- 两边 `:app:compileDebugKotlin` / `:app:testDebugUnitTest` / `:app:assembleRelease`
+  全 `EXIT=0`；main 388 / 合规 369 条单测 0 失败 0 错误。
+- ★ 本轮 zuige **明确要求 adb 安装**，属于 AGENTS §6.4 的单独授权：只做
+  `adb install -r` 覆盖安装 main 的 release 包，**不 tap / 不输入 / 不 dump / 不做真机验收**；
+  合规分支包不装（设备上是 main 的签名包）。
+- 落地结果见本节末尾补记。

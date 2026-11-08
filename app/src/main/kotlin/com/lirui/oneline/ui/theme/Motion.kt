@@ -31,3 +31,23 @@ fun systemReduceMotion(context: Context): Boolean = try {
  * 它两端淡出边缘用的 `com.gigamole.composefadingedges` 本项目不需要。
  */
 val OnelineMotionEasing = CubicBezierEasing(0.48f, 0.19f, 0.05f, 1.03f)
+
+private const val MOTION_PREF = "oneline_settings"
+private const val KEY_PAGE_MOTION = "page_motion"
+
+/**
+ * 「页面切换动效」总开关（设置 → 外观），默认开。
+ *
+ * ★ 读写放在这里而不是 `SettingsRepo`：合规分支的 `SettingsRepo.kt` 有一行未提交的
+ *   上架材料（`PRIVACY_POLICY_VERSION` 1→2），功能提交不能把它夹带进去。开关与
+ *   `systemReduceMotion` / `OnelineMotionEasing` 同处一个文件，两条分支代码逐字一致。
+ *   用的是**同一个** `oneline_settings`，不另建 prefs 文件。
+ */
+fun pageMotionEnabled(context: Context): Boolean =
+    context.getSharedPreferences(MOTION_PREF, Context.MODE_PRIVATE)
+        .getBoolean(KEY_PAGE_MOTION, true)
+
+fun setPageMotionEnabled(context: Context, enabled: Boolean) {
+    context.getSharedPreferences(MOTION_PREF, Context.MODE_PRIVATE)
+        .edit().putBoolean(KEY_PAGE_MOTION, enabled).apply()
+}
