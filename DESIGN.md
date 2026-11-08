@@ -3691,6 +3691,11 @@ zuige 第三次拍板：不要额外符号，句中写「标签作业」，「�
 
 ## §65 文字自己进出场（合规分支适配，2026-11-08）
 
+> ⚠ **2026-11-08 勘误（见 §66）**：本节「alpha 淡入 + 18dp 上滑 + 按行错落」是自行发挥，
+> **不是** ImageToolbox 的方案 —— 漏看了 `AnimatedContent` 默认转场里的
+> `SizeTransform(clip = true)`。源码真正的观感是「文字宽度沿句子末端展开 / 收起 +
+> 先回撤一下」。本节实现已被 §66 替换，历史保留。
+
 > 与 main `DESIGN.md §65` 同题；全仓源码证据、四级结论、参数与实现细节以 main 那节为准。
 
 - zuige 第四次纠正「是单独的文字有动效，而不是一整个卡片」；§64 的整屏 600ms 滑动撤销，
@@ -3714,3 +3719,103 @@ zuige 第三次拍板：不要额外符号，句中写「标签作业」，「�
   **把 `start-server` + `devices` + `install` 放在同一次调用里并允许重试**即恢复；
   详见 main `DESIGN.md §65.5`。
 
+
+
+---
+
+## §66 照官方默认转场复刻「文字沿句末展开 / 收起」（2026-11-08，合规分支适配）
+
+### 66.1 用户第五次纠正
+
+zuige：「他是有点类似入场文字句子的末端展开，出场是末端收起动效/先回撤一下。仔细看他的方案」。
+前四轮分别错在：把 Decompose 页面栈导航动画当成文字动效（§62 / §64）、只扫显式写的
+`fadeIn() togetherWith fadeOut()` 却漏看**没写 spec 时的默认转场**（§65）、最后自己编了
+alpha + 18dp 上滑。§65 已加勘误，历史保留。
+
+### 66.2 查证（全仓 + AndroidX 官方源码）
+
+- GitHub tree 7508 个路径 / 3786 个 kt；本地落地 `core/ui` 336 个 + feature 层 59 个
+  文字 / 标题组件。UI 层 28 处显式 `AnimatedContent` spec，文字级 19 处全是
+  `fadeIn() togetherWith fadeOut()`（个别 + `scaleIn`），**无一处给文字做 slide**。
+- `MainTopAppBar.kt` 的 `MainTitle`：`AnimatedContent(settingsState.mainScreenTitle) { Text(title) }`
+  —— **不写 spec**，外层 `Row(Modifier.marquee())`（内含 `clipToBounds()`）。
+- 官方 `androidx/compose/animation/AnimatedContent.kt` 的
+  `AnimatedContentDefaults.ContentTransform`：
+  `(fadeIn(tween(220, delayMillis = 90)) + scaleIn(initialScale = 0.92f, tween(220, delayMillis = 90)))`
+  `.togetherWith(fadeOut(tween(90)))`；而 `ContentTransform.sizeTransform` 默认就是
+  `SizeTransform()` = `clip = true` + `spring(StiffnessMediumLow)` ——
+  ★ **即使显式写了 spec，尺寸动画也不会消失**，这是 §65 最大的盲点。
+- 默认 `contentAlignment = Alignment.TopStart`：宽度变化时左上角钉住，裁剪边界停在句子
+  右端（末端）→ 0→full 是「往末端展开」、full→0 是「从末端收起」；
+  `fadeOut(90)` + `scaleIn(0.92f)` 就是「先回撤一下」。
+- 全仓唯一直白的 `expandHorizontally(expandFrom = Alignment.Start)` /
+  `shrinkHorizontally` 在 `LoadingDialog.kt`，展开的是游戏区域不是文字；
+  `PreferenceItem.kt` 的 `DefaultStartTransition` / `DefaultEndTransition` 是图标转场。
+
+### 66.3 四级顺序（AGENTS §2）
+
+1. **复用**：`ui/theme/TextEnter.kt` 的作用域（换 import + `LocalTextEnter`）、
+   `ui/theme/Motion.kt` 的 `systemReduceMotion()`、§63「页面切换动效」开关、
+   tab 容器 `AnimatedContent`。
+2. **官方**：`AnimatedContent` **故意不写 `transitionSpec`**，直接走
+   `AnimatedContentDefaults` 与 `SizeTransform(clip = true)` / `spring`；不引第三方依赖。
+3. **开源**：只借 `T8RIN/ImageToolbox`（Apache-2.0）「`AnimatedContent` 只包 `Text`、
+   容器在动画外」的结构，只抄参数不引依赖。
+4. **手写**：仅剩切 tab 的 90ms 显隐状态机（组合期行为，按 §7 不做真机 UI 验收，
+   固化成脚本编译验收）；无判定 / 阈值 / 格式化逻辑，不需新增纯函数单测。
+
+### 66.4 实现（两条分支逐字一致）
+
+- `ui/theme/TextEnter.kt` 重写：删 `Modifier.textEnter()`（`graphicsLayer` alpha + 18dp 上滑）
+  与 `order` 按行错落；`TextEnterSpec(visible, reduceMotion, replayKey)`。
+  `Text` 包装在 `LocalTextEnter == null` 或 `reduceMotion` 时直接退化为 M3 `Text`；
+  否则 `AnimatedContent(targetState = if (visible) text else "", modifier = modifier) { M3Text(it) }`，
+  **不写 spec**。
+  - ★ 收起态用**空串**而不是空 composable：空串 `Text` 宽度为 0、仍占一行高度 →
+    `SizeTransform` 有宽度可动画，同时卡片高度不塌。
+  - ★ `modifier` 挂到 `AnimatedContent` **容器**而不是内部 `Text`，让 `weight` /
+    `fillMaxWidth` / `align` 仍作用在原位置那个 child 上（板块设置行的
+    `Modifier.weight(1f)` 布局不变）。带固定宽度约束的文字只有 fade + scale、
+    没有宽度展开，属预期。
+- `TodoListScreen.kt`：新增 `displayTab` / `textVisible` / `phaseReady`。
+  `LaunchedEffect(tab, reduceMotion)` 在切 tab 时先 `textVisible = false`（旧页文字收起），
+  `delay(90)`（官方 `fadeOut(tween(90))` 的时长 = 「先回撤一下」），
+  再 `displayTab = tab` + `textVisible = true`（新页文字展开）。
+  ★ `displayTab` 只驱动 tab 内容容器；顶栏标题 / 底栏高亮 / FAB 仍读外层 `tab`，
+  点击立刻响应。`reduceMotion` 命中时直接硬切、不延迟；冷启动用 `phaseReady` 跳过，
+  不闪一下。快速连点由 `LaunchedEffect` 自动取消前一个 delay，最终落到最后一个 tab。
+- tab 容器仍是 `EnterTransition.None togetherWith ExitTransition.None`
+  （**页面 / 卡片 / 图标 / 背景完全不动**）；`CompositionLocalProvider` 只挂在四个 tab
+  的文字层里。
+- 撤销 §65 的 `for ((index, row) in rows.withIndex())` + 三个 item 内
+  `CompositionLocalProvider`，还原 `for (row in rows)`：不再按行错落，
+  整页文字一起进出场（严格照源码）。
+- 顶栏标题原本就是「`AnimatedContent` 只包 `Text` + Compose 默认 spec」，§66 原样保留。
+- 设置项说明与 `README.md` 外观段同步为「旧页文字先回撤、新页文字沿句末展开」。
+
+### 66.4-bis 合规分支边界核对（AGENTS §4）
+
+- 只改 UI 动效与文案，Manifest 零改动，无 `INTERNET` / `update/` / `UpdateDialog.kt`；
+  关于页「没有应用内检查更新（v1.0.0 起）」仍在；无新权限 / 无数据类别变化 →
+  `PRIVACY_POLICY_VERSION` 不动、`docs/PRIVACY.md` 不改。
+  3 个上架材料（`PrivacyScreen.kt` / `SettingsRepo.kt` / `docs/PRIVACY.md`）
+  仍未提交、原样保留。
+
+### 66.5 验证与收尾
+
+- 两边 `:app:compileDebugKotlin` / `:app:testDebugUnitTest` / `:app:assembleRelease`
+  全 `EXIT=0`：main **388** 条 / 合规 **369** 条单测 0 失败 0 错误；产物 main
+  **2,109,692 字节**（15:34）/ 合规 **2,076,404 字节**（15:38）。
+- ★ 脚本验收：解压两边 release APK 的 dex 搜符号 —— `textReveal` 各 1 次，
+  旧的 `textEnterAlpha` / `textEnterShift` 均为 0，确认 R8 产物确实是 §66 新代码
+  （APK 字节数与 §65 巧合相同，别据此误判成没重打包）。动效属组合期行为，
+  按 §7 不截图 / 不 tap / 不 dump，也不做真机 UI 验收。
+- 按 §5 版本号不动、不发版；Manifest 零改动，合规分支边界未越。
+- ⚠ **本轮 adb 覆盖安装未完成**：按 §6.4 只发 `install -r`，但单进程内
+  `start-server` + 4 次 `devices -l` 重试仍是空表，且 Windows
+  `Get-PnpDevice -PresentOnly` 也查不到 `vivo X100s Pro` / `VID_2D95` ADB 接口 ——
+  与 14:17 那次「daemon 冷启动、枚举时机」不同，这次**设备确实不在线**。
+  未发任何按键、未 tap / dump / 截图；新包停在 `app/build/outputs/apk/release/`，
+  请重新连接 USB 并解锁授权后再装。
+- 合规分支本轮不装机（设备是 main 签名），只跑脚本验收；3 个上架材料仍未提交、原样保留。
+- 落地：两条分支各一次提交，见 `git log`。

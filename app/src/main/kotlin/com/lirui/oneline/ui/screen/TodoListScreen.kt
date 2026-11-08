@@ -474,6 +474,28 @@ private fun TodoAppContent(
     var pageMotion by remember { mutableStateOf(pageMotionEnabled(context)) }
     val reduceMotion = systemReduceMotion(context) || !pageMotion
 
+    // ★ §66：切 tab 时先让旧页文字「回撤」（visible = false），等官方默认
+    //   fadeOut(tween(90)) 的 90ms 走完再换页，新页文字再展开（visible = true）。
+    //   displayTab 只驱动页面内容；顶栏标题 / 底栏高亮 / FAB 仍读外层 tab，点击立刻响应。
+    var displayTab by remember { mutableStateOf(tab) }
+    var textVisible by remember { mutableStateOf(true) }
+    var phaseReady by remember { mutableStateOf(false) }
+    LaunchedEffect(tab, reduceMotion) {
+        if (!phaseReady) {
+            phaseReady = true
+            return@LaunchedEffect
+        }
+        if (reduceMotion) {
+            displayTab = tab
+            textVisible = true
+        } else {
+            textVisible = false
+            delay(90)
+            displayTab = tab
+            textVisible = true
+        }
+    }
+
     Box(Modifier.fillMaxSize()) {
         Scaffold(
             // ★ 自己管状态栏：Scaffold 的 contentWindowInsets 一律清零。
@@ -516,26 +538,30 @@ private fun TodoAppContent(
                     // 只吃底栏高度：状态栏由每个列表的 contentPadding.top 负责（见 statusBarDp）。
                     .padding(bottom = padding.calculateBottomPadding())
             ) {
-                // ★ 2026-11-08（§65）：四个 tab 的**容器硬切**，动画只给文字。
-                //   §62 / §64 把 `AnimatedContent` 包住整个页面（1/12 屏宽 → 600ms
-                //   整屏滑动），那其实是 ImageToolbox 的页面栈导航动画，不是它的
-                //   文字动效。源码里 `AnimatedContent` 只包 `Text`，`Card` / `Row`
-                //   全在动画作用域外（见 ui/theme/TextEnter.kt）。
-                //   ★ content lambda 里仍用 `targetTab`，不能用外层的 `tab`。
+                // ★ 2026-11-08（§66）：四个 tab 的**容器硬切**，只有文字进出场。
+                //   §62 / §64 的整屏滑动是 ImageToolbox 的页面栈导航动画，不是文字动效；
+                //   §65 自己编的「alpha + 18dp 上滑」也不对 —— 源码里文字走的是
+                //   `AnimatedContent` 默认转场（SizeTransform(clip = true) 的末端展开 / 收起）。
+                //   ★ targetState 用 displayTab：先回撤旧页文字 90ms 再换页，
+                //     新页文字展开；content lambda 里仍用 targetTab，不能用外层 tab。
                 AnimatedContent(
-                    targetState = tab,
+                    targetState = displayTab,
                     transitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
                     modifier = Modifier
                         .fillMaxSize()
                         .background(MaterialTheme.colorScheme.background),
                     label = "tabContent"
                 ) { targetTab ->
-                    // ★ §65：只有这一层里的文字会进场；顶栏 / 底栏 / FAB 读不到
-                    //   这个 CompositionLocal，保持原样。replayKey = targetTab 让换页重播。
+                    // ★ §66：只有这一层里的文字会进出场；顶栏 / 底栏 / FAB 读不到
+                    //   这个 CompositionLocal，保持原样。visible 由外层显隐状态机驱动。
                     //   remember 缓存 spec：staticCompositionLocalOf 按对象引用判变化，
                     //   不缓存的话页面里任何 state 重组都会把整棵文字树带着重组。
-                    val textEnterSpec = remember(targetTab, reduceMotion) {
-                        TextEnterSpec(replayKey = targetTab, reduceMotion = reduceMotion)
+                    val textEnterSpec = remember(targetTab, textVisible, reduceMotion) {
+                        TextEnterSpec(
+                            visible = textVisible,
+                            replayKey = targetTab,
+                            reduceMotion = reduceMotion
+                        )
                     }
                     CompositionLocalProvider(LocalTextEnter provides textEnterSpec) {
                         when (targetTab) {
@@ -1040,8 +1066,7 @@ private fun TodoList(
     /** 滚动到位后的回调（参数 = 定位到的待办 id），调用方据此置高亮。 */
     onLocated: (Long) -> Unit = {}
 ) {
-    // ★ §65：在 Composable 作用域里读一次，供下面 LazyColumn 的 item 按行错落。
-    val enterSpec = LocalTextEnter.current
+    // ★ §66：不再按行错落，整页文字统一由 LocalTextEnter 的显隐状态驱动。
     val empty = todos.isEmpty()
     // 空状态自己淡入淡出；下面仍是 `if (!empty)` 的原始分支，只是不再用 if/else 二选一，
     // 这样空列表和有列表之间切换时不会"闪"一下。
@@ -1103,29 +1128,21 @@ private fun TodoList(
                 bottom = 8.dp
             )
         ) {
-            for ((index, row) in rows.withIndex()) {
-                // ★ §65：每 8 行一轮，最多 168ms 延迟；卡片 / 容器不参与。
-                val rowEnter = enterSpec?.copy(order = index % 8)
+            for (row in rows) {
                 when (row) {
                     is RowItem.BoardTitle -> item(key = "board_${row.board.id}") {
-                        CompositionLocalProvider(LocalTextEnter provides rowEnter) {
-                            BoardHeader(row.board, Modifier.animateItem())
-                        }
+                        BoardHeader(row.board, Modifier.animateItem())
                     }
                     is RowItem.BucketTitle -> item(key = "bucket_${row.bucket.id}") {
-                        CompositionLocalProvider(LocalTextEnter provides rowEnter) {
-                            BucketHeader(row.bucket, Modifier.animateItem())
-                        }
+                        BucketHeader(row.bucket, Modifier.animateItem())
                     }
                     is RowItem.Entry -> item(key = row.todo.id) {
-                        CompositionLocalProvider(LocalTextEnter provides rowEnter) {
-                            TodoListRow(
-                                row.todo, today, now, row.todo.id in pendingArchive, gestures,
-                                onCircleTap, onSwipeArchive, onTodoEdit,
-                                highlighted = row.todo.id == highlightId,
-                                modifier = Modifier.animateItem()
-                            )
-                        }
+                        TodoListRow(
+                            row.todo, today, now, row.todo.id in pendingArchive, gestures,
+                            onCircleTap, onSwipeArchive, onTodoEdit,
+                            highlighted = row.todo.id == highlightId,
+                            modifier = Modifier.animateItem()
+                        )
                     }
                 }
             }
@@ -1677,7 +1694,7 @@ private fun SettingsScreen(
                 //   不像专注环那样在设置页内自读自写 —— 否则开关改了转场不会立刻重组。
                 ToggleItem(
                     "页面切换动效",
-                    "切换四个 tab 时页面里的文字淡入上滑、按行错落；关掉后直接硬切",
+                    "切换四个 tab 时旧页文字先回撤、新页文字沿句末展开；关掉后直接硬切",
                     pageMotion,
                     onChecked = onSetPageMotion
                 )
