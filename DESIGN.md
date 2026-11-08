@@ -3674,8 +3674,9 @@ zuige 第三次拍板：不要额外符号，句中写「标签作业」，「�
   Manifest 零改动，无 `INTERNET` / `update/` / `UpdateDialog.kt`；关于页「没有应用内
   检查更新（v1.0.0 起）」仍在；纯 UI 偏好，无新权限 / 无数据类别变化 →
   `PRIVACY_POLICY_VERSION` 不动、`docs/PRIVACY.md` 不改。
-- 验证：`:app:testDebugUnitTest` / `:app:assembleRelease` 全 `EXIT=0`；按 §6.4 不连设备、
-  不装机、不 tap / dump；按 §5 版本号不动、不发版，vivo 商店后台与博客源都不碰。
-- 落地：本分支一次提交，见 `git log`。3 个上架材料（`PrivacyScreen.kt` /
-  `SettingsRepo.kt` / `docs/PRIVACY.md`）仍未提交、原样保留。
+- 验证：`:app:testDebugUnitTest` / `:app:assembleRelease` 全 `EXIT=0`，本分支 369 条单测
+  0 失败 0 错误，产物 2,060,020 字节（09:36）；按 §6.4 不连设备、不装机、不 tap / dump；
+  按 §5 版本号不动、不发版，vivo 商店后台与博客源都不碰。
+- 落地：本分支 `fe9f528` + 本条落地结果 docs 提交，对应 main `70b8673`；本轮不装机。
+  3 个上架材料（`PrivacyScreen.kt` / `SettingsRepo.kt` / `docs/PRIVACY.md`）仍未提交、原样保留。
 
