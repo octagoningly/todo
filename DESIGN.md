@@ -3647,4 +3647,6 @@ zuige 第三次拍板：不要额外符号，句中写「标签作业」，「�
   `docs/PRIVACY.md` 不改。
 - 验证：`:app:compileDebugKotlin` / `:app:testDebugUnitTest` / `:app:assembleRelease`
   全 `EXIT=0`；按 §5 不发版。本轮 adb 安装**只装 main 包**，不装合规分支包。
+- 落地：本分支 `5b350c0`，对应 main `f02c66e`；产物 2,060,020 字节。
+  3 个上架材料（`PrivacyScreen.kt` / `SettingsRepo.kt` / `docs/PRIVACY.md`）仍未提交、原样保留。
 
