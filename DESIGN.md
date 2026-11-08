@@ -4950,4 +4950,9 @@ zuige：「设置里面做一个开关，然后 adb 安装」。给 §62 刚落�
 - ★ 本轮 zuige **明确要求 adb 安装**，属于 AGENTS §6.4 的单独授权：只做
   `adb install -r` 覆盖安装 main 的 release 包，**不 tap / 不输入 / 不 dump / 不做真机验收**；
   合规分支包不装（设备上是 main 的签名包）。
-- 落地结果见本节末尾补记。
+- **落地**：main `f02c66e`、合规分支 `5b350c0`（同一套 diff 按该分支适配）。
+  产物 main 2,109,692 字节（09:33）/ 合规 2,060,020 字节；版本号不动、未发版。
+- ✅ **adb 覆盖安装成功**：`10AE721UXN000QG`（vivo V2324HA）
+  `Performing Streamed Install` → `Success`，装的是 main 09:33 的 release 包。
+  **只装不测**：没有 tap / 输入 / dump / 截图；合规分支包未装。
+- 工作区复核：main 的 `output/` / `show/` / `dist/` 与合规分支 3 个上架材料均未进提交。
