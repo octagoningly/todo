@@ -491,7 +491,8 @@ AppTimeTest             3 条
 ```
 
 备份的 JSON 流读写依赖 Android 平台 `org.json`（本地单测里是 android.jar stub），
-所以单测只覆盖 `BackupRules` 的纯判定，真正的导出 / 恢复靠真机验收。
+所以单测只覆盖 `BackupRules` 的纯判定；导出 / 恢复的编解码按 `AGENTS.md §6.4`
+默认**不做真机验收**（带 `Context` / `org.json` 的例外），确需验证须单独授权。
 
 Room 迁移不在本地单测覆盖范围内，另有一组 instrumented 测试
 `app/src/androidTest/.../AppDatabaseMigrationTest.kt`：用 `MigrationTestHelper` +
