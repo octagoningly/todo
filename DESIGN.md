@@ -3677,6 +3677,8 @@ zuige 第三次拍板：不要额外符号，句中写「标签作业」，「�
 - 验证：`:app:testDebugUnitTest` / `:app:assembleRelease` 全 `EXIT=0`，本分支 369 条单测
   0 失败 0 错误，产物 2,060,020 字节（09:36）；按 §6.4 不连设备、不装机、不 tap / dump；
   按 §5 版本号不动、不发版，vivo 商店后台与博客源都不碰。
-- 落地：本分支 `fe9f528` + 本条落地结果 docs 提交，对应 main `70b8673`；本轮不装机。
+- 落地：本分支 `fe9f528` + 本条落地结果 docs 提交，对应 main `70b8673`；本轮只装
+  main 包（设备上是 main 签名），且因设备锁屏 `INSTALL_FAILED_ABORTED` 未完成，
+  待手动解锁后重试；合规分支包不装。
   3 个上架材料（`PrivacyScreen.kt` / `SettingsRepo.kt` / `docs/PRIVACY.md`）仍未提交、原样保留。
 
