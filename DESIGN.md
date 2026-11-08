@@ -4966,6 +4966,11 @@ zuige：「设置里面做一个开关，然后 adb 安装」。给 §62 刚落�
 
 ## §64 按 ImageToolbox 原参数还原「文字进出场」（2026-11-08）
 
+> ⚠ **勘误（2026-11-08，§65）**：本节把 ImageToolbox 的**页面栈导航动画**
+> （`fancySlideTransition` 整屏 600ms）当成了「文字动效」搬进来，方向是错的 ——
+> zuige 明确「是单独的文字有动效，而不是一整个卡片」。整屏滑动已由 §65 撤销，
+> 「顶栏标题只包 `Text`、容器在动画外」这个结构结论仍成立并保留。
+
 ### 64.1 用户反馈：§62 把主体动效削掉了
 
 zuige 装上 §63 的包后反馈：「现在好像只有切换的时候页面有一点动效，但是我说的文字动效还是没有啊。不是让你参考那个开源项目了吗」。
@@ -5044,3 +5049,80 @@ Compose 默认 fade + scale**。两者叠加才是用户要的「文字动效」
   （`INSTALL_FAILED_ABORTED`），`push + pm install` 与 `keyevent 224/82` 均未绕过。
 - ★ 规矩已按 zuige 原话同步到两边 `AGENTS.md §6.4 / §7`：**adb 装机允许、操控禁止**。
 - 工作区复核：main 的 `output/` / `show/` / `dist/` 与合规分支 3 个上架材料均未进提交。
+
+---
+
+## §65 文字自己进出场：撤掉整屏滑动，动画下沉到 Text（2026-11-08）
+
+### 65.1 用户第四次纠正：不是整页 / 整张卡片动
+
+zuige：「不是啊，我记得那个开源 app 是单独的文字有动效，而不是一整个开卡片，是文字有进出场动效」。
+
+★ §62 / §64 两次都把**页面导航动画**当成了文字动效。这次全仓查证后确认：
+**ImageToolbox 的「文字动效」是 `AnimatedContent` 只包住 `Text`，容器在动画作用域之外**；
+`fancySlideTransition` 的 600ms 整屏滑动只用于 Decompose 页面栈导航，是另一件事。
+所以 §64 的整屏滑动必须撤掉。
+
+### 65.2 源码证据（全仓扫，不是挑几个文件）
+
+| 文件 | 结构 / spec |
+|---|---|
+| `core/ui/.../widget/preferences/PreferenceItemOverload.kt` | `Card(...)` 在最外层；里面 `AnimatedContent(targetState = title, transitionSpec = { fadeIn() togetherWith fadeOut() }) { Text(...) }`，副标题同款；还有 `animateTitle: Boolean = true` 开关 |
+| `core/ui/.../widget/preferences/PreferenceRow.kt` | `container(...)` / `clickable` 全在动画外，只有标题、副标题各自 `AnimatedContent` 包 `Text` |
+| `core/ui/.../widget/text/TopAppBarTitle.kt` | 外层 `fadeIn() togetherWith fadeOut()`；嵌套 `AnimatedContent(targetState = title) { Text(it) }` 走 Compose 默认 fade+scale |
+| `feature/main/.../MainTopAppBar.kt` | `AnimatedContent(settingsState.mainScreenTitle) { Text(title) }` |
+| `core/ui/.../widget/value/ValueText.kt` | `fadeIn(tween(100)) togetherWith fadeOut(tween(100))` |
+| `core/ui/.../utils/animation/Animations.kt` | `fancySlideTransition` = 页面栈导航，**与文字动效无关** |
+
+用 GitHub tree（7508 个路径）+ 并发拉 raw 扫了 UI 层 366 个 Kotlin 文件：
+19 处文字级 `AnimatedContent`，spec 全是**纯 fade**（个别 `fadeIn() + scaleIn()`），
+**没有任何一处给文字做 slide**。仓库默认分支是 `master`（按 `main` 拉 raw 全 404）。
+
+### 65.3 四级实现顺序（AGENTS §2）
+
+1. **复用旧模块**：`ui/theme/Motion.kt` 的 `OnelineMotionEasing` / `systemReduceMotion`、
+   §63 的 `pageMotion` 开关与 `reduceMotion` 收口，以及 `TodoListScreen` 里
+   `AnimatedContent(targetState = tab) { targetTab -> ... }` 的既有结构。
+2. **Google 官方**：`CompositionLocalProvider` + `staticCompositionLocalOf`、
+   `animateFloatAsState` + `graphicsLayer`、`Modifier.basicMarquee`（顶栏）、
+   `tween` / `CubicBezierEasing`。
+3. **开源参考**：`T8RIN/ImageToolbox`（Apache-2.0）的**结构结论** —— 动画作用域
+   严格只到 `Text`，卡片 / Row / 图标 / 背景一律在外；时序沿用它的短 fade。
+   **不引任何依赖**（§49.1 先例）。
+4. **手写**：需要共用文字组件与「按行错落」的触发状态，故新建
+   `ui/theme/TextEnter.kt`；无判定类纯函数，不新增 JVM 单测，按 §6.4 走脚本编译 + release 验收。
+
+### 65.4 实现（两条分支逐字一致）
+
+- **撤整屏滑动**：tab 内容 `AnimatedContent.transitionSpec` 改成
+  `EnterTransition.None togetherWith ExitTransition.None`，**页面容器硬切**；
+  `when(targetTab)` 与 `targetTab` 语义保留（防止滚动状态错乱）。
+  删掉 `slideIn/OutHorizontally` / `OnelineMotionEasing` 的无用 import。
+- **顶栏标题保留**：它本来就只有 `Text` 在 `AnimatedContent` 里，是标准的
+  ImageToolbox 文字动效结构，§65 原样留着（Compose 默认 fade+scale，浮层不进转场）。
+- **新增 `ui/theme/TextEnter.kt`**：
+  - `TextEnterSpec(replayKey, reduceMotion, order)` + `LocalTextEnter`（默认 `null`）。
+  - `Modifier.textEnter()`：`remember(replayKey)` 重置 → `LaunchedEffect` 延迟
+    `order * 24ms`（封顶 240ms）→ `animateFloatAsState` 驱动 alpha 0→1（220ms）与
+    18dp→0 的上滑（260ms，`OnelineMotionEasing`），全部写在 `graphicsLayer` 上。
+    ★ **只改绘制层、不改测量结果**：文字始终占位，卡片高度不跳、背景 / 圆圈 / 徽章完全不动。
+  - `Text(...)` 与 M3 `Text` 同签名的包装，内部 `modifier.textEnter()`。
+- **作用域靠「换 import」收口**：`TodoListScreen.kt` / `AboutScreen.kt` 的
+  `androidx.compose.material3.Text` 换成项目内 `Text`；`AddSheet` / `FocusScreen` /
+  `UpdateDialog` 不换，弹窗与专注页不受影响。
+- **只在四个 tab 的文字层生效**：`AnimatedContent` 的 content lambda 里
+  `CompositionLocalProvider(LocalTextEnter provides TextEnterSpec(targetTab, reduceMotion))`。
+  顶栏 / 底栏 / FAB / 弹窗读不到（默认 `null`）→ 一点动画不加。
+- **按行错落**：`TodoList` 的 `for ((index, row) in rows.withIndex())`，每个 item 再挂一层
+  `CompositionLocalProvider(... order = index % 8)`。板块标题 / 档位标题 / 待办本体
+  各自带自己的 order，设置页与关于页用 order 0。
+- **开关**：`reduceMotion = 系统减少动画 || !pageMotion` 传进 `TextEnterSpec`，
+  命中即 `textEnter()` 直接返回原 Modifier；§63 开关名与位置不变，说明文案改成
+  「页面里的文字淡入上滑、按行错落」。
+
+### 65.5 验证与收尾
+
+- 两边 `:app:testDebugUnitTest` / `:app:assembleRelease` 全 `EXIT=0`，
+  main 388 / 合规 369 条单测 0 失败 0 错误。动效是组合期行为，按 §7 不做真机 UI 验收。
+- 按 §5 版本号不动、不发版；Manifest 零改动，合规分支边界未越。
+- 落地：main 与合规分支各一次提交，见 `git log`。

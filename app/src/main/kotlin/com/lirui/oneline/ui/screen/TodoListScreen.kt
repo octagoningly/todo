@@ -23,9 +23,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Animatable
@@ -97,11 +95,12 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
+import com.lirui.oneline.ui.theme.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -159,7 +158,8 @@ import com.lirui.oneline.ui.theme.actionContent
 import com.lirui.oneline.ui.theme.actionDisabledContainer
 import com.lirui.oneline.ui.theme.actionDisabledContent
 import com.lirui.oneline.ui.theme.CardShape
-import com.lirui.oneline.ui.theme.OnelineMotionEasing
+import com.lirui.oneline.ui.theme.LocalTextEnter
+import com.lirui.oneline.ui.theme.TextEnterSpec
 import com.lirui.oneline.ui.theme.pageMotionEnabled
 import com.lirui.oneline.ui.theme.setPageMotionEnabled
 import com.lirui.oneline.ui.theme.systemReduceMotion
@@ -549,171 +549,149 @@ private fun TodoAppContent(
                     // 只吃底栏高度：状态栏由每个列表的 contentPadding.top 负责（见 statusBarDp）。
                     .padding(bottom = padding.calculateBottomPadding())
             ) {
-                // ★ 2026-11-08（§62 起，§64 修订）：四个 tab 不再 `when(tab)` 硬切。
-                //   §64 起照抄 T8RIN/ImageToolbox `fancySlideTransition` 的原参数：整屏
-                //   水平滑入 / 滑出 600ms + fadeIn/fadeOut(300ms, 延迟 100ms)；按 tab
-                //   序号判断前进 / 后退，四页共用一套 spec。只抄参数，不引依赖。
-                //   ★ content lambda 里一律用 `targetTab`，不能用外层的 `tab` —— 过渡期间
-                //     旧页仍在组合，用实时 tab 会让旧页错拿新页的 listState（滚动位置错乱）。
-                //   ★ 系统「减少动态效果」时直接硬切，尊重无障碍设置。
+                // ★ 2026-11-08（§65）：四个 tab 的**容器硬切**，动画只给文字。
+                //   §62 / §64 把 `AnimatedContent` 包住整个页面（1/12 屏宽 → 600ms
+                //   整屏滑动），那其实是 ImageToolbox 的页面栈导航动画，不是它的
+                //   文字动效。源码里 `AnimatedContent` 只包 `Text`，`Card` / `Row`
+                //   全在动画作用域外（见 ui/theme/TextEnter.kt）。
+                //   ★ content lambda 里仍用 `targetTab`，不能用外层的 `tab`。
                 AnimatedContent(
                     targetState = tab,
-                    transitionSpec = {
-                        if (reduceMotion) {
-                            EnterTransition.None togetherWith ExitTransition.None
-                        } else {
-                            // ★ §64：照抄 T8RIN/ImageToolbox `Animations.kt` 的
-                            //   fancySlideTransition 原参数 —— 整屏水平滑入/滑出 600ms
-                            //   + fadeIn/fadeOut(tween(300, 100))。§62 曾把它削成
-                            //   1/12 屏宽 320ms，页面里的文字几乎不动，观感上
-                            //   「只有页面轻轻一晃、文字没有进出场」。
-                            //   `it` 就是整屏宽度；后退时方向反转。
-                            if (targetState > initialState) {
-                                (slideInHorizontally(
-                                    animationSpec = tween(600, easing = OnelineMotionEasing),
-                                    initialOffsetX = { it }
-                                ) + fadeIn(tween(300, 100))) togetherWith
-                                    (slideOutHorizontally(
-                                        animationSpec = tween(600, easing = OnelineMotionEasing),
-                                        targetOffsetX = { -it }
-                                    ) + fadeOut(tween(300, 100)))
-                            } else {
-                                (slideInHorizontally(
-                                    animationSpec = tween(600, easing = OnelineMotionEasing),
-                                    initialOffsetX = { -it }
-                                ) + fadeIn(tween(300, 100))) togetherWith
-                                    (slideOutHorizontally(
-                                        animationSpec = tween(600, easing = OnelineMotionEasing),
-                                        targetOffsetX = { it }
-                                    ) + fadeOut(tween(300, 100)))
-                            }
-                        }
-                    },
+                    transitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
                     modifier = Modifier
                         .fillMaxSize()
                         .background(MaterialTheme.colorScheme.background),
                     label = "tabContent"
                 ) { targetTab ->
-                    when (targetTab) {
-                        TAB_TODO -> TodoList(
-                            active,
-                            boardOrder,
-                            hiddenBoards,
-                            homeBuckets,
-                            pendingArchive = pendingArchive,
-                            gestures = rememberGestures(),
-                            topInset = statusBarDp,
-                            onCircleTap = { todo ->
-                                // 点圆圈：先播 650ms 填充动画，动画走完再写库。计时器在 ViewModel 里，
-                                // 行被回收（快速滑动）也不会中断 —— 这是 v0.3 归档失效的根因修复。
-                                vm.requestArchive(todo.id, animate = true)
-                                // A repeating todo rolls forward instead of archiving, and undo cannot
-                                // restore that, so only show the completion bar for real archiving.
-                                val rollsForward =
-                                    todo.repeatDays > 0 && SettingsRepo.autoRepeatEnabled(context)
-                                if (!rollsForward) justCompleted = todo
-                            },
-                            onSwipeArchive = { todo ->
-                                // 右滑：行已经滑出屏幕，立即写库，不再等动画。
-                                vm.requestArchive(todo.id, animate = false)
-                                val rollsForward =
-                                    todo.repeatDays > 0 && SettingsRepo.autoRepeatEnabled(context)
-                                if (!rollsForward) justCompleted = todo
-                            },
-                            onTodoEdit = { todo ->
-                                editTarget = todo
-                                vm.previewExisting(todo)
-                                showAdd = true
-                            },
-                            listState = todoListState,
-                            scrollToTodoId = scrollToTodoId,
-                            highlightId = highlightId,
-                            onScrollHandled = { scrollToTodoId = -1L },
-                            onLocated = { highlightId = it }
-                        )
-                        TAB_ARCHIVED -> ArchivedList(
-                            archived,
-                            onRestore = { vm.unarchive(it) },
-                            onDelete = { vm.delete(it) },
-                            listState = archivedListState,
-                            topInset = statusBarDp,
-                            scrollToTodoId = scrollToTodoId,
-                            highlightId = highlightId,
-                            onScrollHandled = { scrollToTodoId = -1L },
-                            onLocated = { highlightId = it }
-                        )
-                        TAB_SETTINGS -> SettingsScreen(
-                            themeMode = themeMode,
-                            onSetThemeMode = onSetThemeMode,
-                            immersive = immersive,
-                            onSetImmersive = { immersive = it },
-                            paletteId = paletteId,
-                            onSetPalette = onSetPalette,
-                            darkCardStyleId = darkCardStyleId,
-                            onSetDarkCardStyle = onSetDarkCardStyle,
-                            remindersEnabled = remindersEnabled,
-                            onSetRemindersEnabled = { on ->
-                                onSetRemindersEnabled(on)
-                                onRescheduleReminders()
-                            },
-                            remindAtDue = remindAtDue,
-                            onSetRemindAtDue = { on ->
-                                onSetRemindAtDue(on)
-                                onRescheduleReminders()
-                            },
-                            remindInAdvance = remindInAdvance,
-                            onSetRemindInAdvance = { on ->
-                                onSetRemindInAdvance(on)
-                                onRescheduleReminders()
-                            },
-                            overdueNag = overdueNag,
-                            onSetOverdueNag = { on ->
-                                onSetOverdueNag(on)
-                                onRescheduleReminders()
-                            },
-                            overdueInterval = overdueInterval,
-                            onSetOverdueInterval = { hours ->
-                                onSetOverdueInterval(hours)
-                                onRescheduleReminders()
-                            },
-                            boardOrder = boardOrder,
-                            onSetBoardOrder = onSetBoardOrder,
-                            hiddenBoards = hiddenBoards,
-                            onSetHiddenBoards = onSetHiddenBoards,
-                            homeBuckets = homeBuckets,
-                            onSetHomeBuckets = onSetHomeBuckets,
-                            defaultMinuteOfDay = defaultMinuteOfDay,
-                            onSetDefaultMinuteOfDay = onSetDefaultMinuteOfDay,
-                            autoRepeat = autoRepeat,
-                            onSetAutoRepeat = onSetAutoRepeat,
-                            pageMotion = pageMotion,
-                            onSetPageMotion = { on ->
-                                pageMotion = on
-                                setPageMotionEnabled(context, on)
-                            },
-                            onRescheduleReminders = onRescheduleReminders,
-                            onExactAlarmSettings = onExactAlarmSettings,
-                            onTestNotification = {
-                                if (NotificationHelper.canPostNotifications(context)) {
-                                    NotificationHelper.postTest(
-                                        context,
-                                        "通知测试",
-                                        SettingsRepo.notificationStyle(context).dueWord,
-                                        quote = Quotes.random(context)
-                                    )
-                                } else {
-                                    Toast.makeText(context, "请先允许通知权限", Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                            onTestTodo = { vm.addTestInOneMinute() },
-                            listState = settingsListState,
-                            topInset = statusBarDp
-                        )
-                        TAB_ABOUT -> AboutScreen(
-                            // 浮层顶栏在关于页不显示：hero 就是页头，只需让出状态栏。
-                            topPadding = statusBarDp,
-                            listState = aboutListState
-                        )
+                    // ★ §65：只有这一层里的文字会进场；顶栏 / 底栏 / FAB 读不到
+                    //   这个 CompositionLocal，保持原样。replayKey = targetTab 让换页重播。
+                    //   remember 缓存 spec：staticCompositionLocalOf 按对象引用判变化，
+                    //   不缓存的话页面里任何 state 重组都会把整棵文字树带着重组。
+                    val textEnterSpec = remember(targetTab, reduceMotion) {
+                        TextEnterSpec(replayKey = targetTab, reduceMotion = reduceMotion)
+                    }
+                    CompositionLocalProvider(LocalTextEnter provides textEnterSpec) {
+                        when (targetTab) {
+                            TAB_TODO -> TodoList(
+                                active,
+                                boardOrder,
+                                hiddenBoards,
+                                homeBuckets,
+                                pendingArchive = pendingArchive,
+                                gestures = rememberGestures(),
+                                topInset = statusBarDp,
+                                onCircleTap = { todo ->
+                                    // 点圆圈：先播 650ms 填充动画，动画走完再写库。计时器在 ViewModel 里，
+                                    // 行被回收（快速滑动）也不会中断 —— 这是 v0.3 归档失效的根因修复。
+                                    vm.requestArchive(todo.id, animate = true)
+                                    // A repeating todo rolls forward instead of archiving, and undo cannot
+                                    // restore that, so only show the completion bar for real archiving.
+                                    val rollsForward =
+                                        todo.repeatDays > 0 && SettingsRepo.autoRepeatEnabled(context)
+                                    if (!rollsForward) justCompleted = todo
+                                },
+                                onSwipeArchive = { todo ->
+                                    // 右滑：行已经滑出屏幕，立即写库，不再等动画。
+                                    vm.requestArchive(todo.id, animate = false)
+                                    val rollsForward =
+                                        todo.repeatDays > 0 && SettingsRepo.autoRepeatEnabled(context)
+                                    if (!rollsForward) justCompleted = todo
+                                },
+                                onTodoEdit = { todo ->
+                                    editTarget = todo
+                                    vm.previewExisting(todo)
+                                    showAdd = true
+                                },
+                                listState = todoListState,
+                                scrollToTodoId = scrollToTodoId,
+                                highlightId = highlightId,
+                                onScrollHandled = { scrollToTodoId = -1L },
+                                onLocated = { highlightId = it }
+                            )
+                            TAB_ARCHIVED -> ArchivedList(
+                                archived,
+                                onRestore = { vm.unarchive(it) },
+                                onDelete = { vm.delete(it) },
+                                listState = archivedListState,
+                                topInset = statusBarDp,
+                                scrollToTodoId = scrollToTodoId,
+                                highlightId = highlightId,
+                                onScrollHandled = { scrollToTodoId = -1L },
+                                onLocated = { highlightId = it }
+                            )
+                            TAB_SETTINGS -> SettingsScreen(
+                                themeMode = themeMode,
+                                onSetThemeMode = onSetThemeMode,
+                                immersive = immersive,
+                                onSetImmersive = { immersive = it },
+                                paletteId = paletteId,
+                                onSetPalette = onSetPalette,
+                                darkCardStyleId = darkCardStyleId,
+                                onSetDarkCardStyle = onSetDarkCardStyle,
+                                remindersEnabled = remindersEnabled,
+                                onSetRemindersEnabled = { on ->
+                                    onSetRemindersEnabled(on)
+                                    onRescheduleReminders()
+                                },
+                                remindAtDue = remindAtDue,
+                                onSetRemindAtDue = { on ->
+                                    onSetRemindAtDue(on)
+                                    onRescheduleReminders()
+                                },
+                                remindInAdvance = remindInAdvance,
+                                onSetRemindInAdvance = { on ->
+                                    onSetRemindInAdvance(on)
+                                    onRescheduleReminders()
+                                },
+                                overdueNag = overdueNag,
+                                onSetOverdueNag = { on ->
+                                    onSetOverdueNag(on)
+                                    onRescheduleReminders()
+                                },
+                                overdueInterval = overdueInterval,
+                                onSetOverdueInterval = { hours ->
+                                    onSetOverdueInterval(hours)
+                                    onRescheduleReminders()
+                                },
+                                boardOrder = boardOrder,
+                                onSetBoardOrder = onSetBoardOrder,
+                                hiddenBoards = hiddenBoards,
+                                onSetHiddenBoards = onSetHiddenBoards,
+                                homeBuckets = homeBuckets,
+                                onSetHomeBuckets = onSetHomeBuckets,
+                                defaultMinuteOfDay = defaultMinuteOfDay,
+                                onSetDefaultMinuteOfDay = onSetDefaultMinuteOfDay,
+                                autoRepeat = autoRepeat,
+                                onSetAutoRepeat = onSetAutoRepeat,
+                                pageMotion = pageMotion,
+                                onSetPageMotion = { on ->
+                                    pageMotion = on
+                                    setPageMotionEnabled(context, on)
+                                },
+                                onRescheduleReminders = onRescheduleReminders,
+                                onExactAlarmSettings = onExactAlarmSettings,
+                                onTestNotification = {
+                                    if (NotificationHelper.canPostNotifications(context)) {
+                                        NotificationHelper.postTest(
+                                            context,
+                                            "通知测试",
+                                            SettingsRepo.notificationStyle(context).dueWord,
+                                            quote = Quotes.random(context)
+                                        )
+                                    } else {
+                                        Toast.makeText(context, "请先允许通知权限", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                onTestTodo = { vm.addTestInOneMinute() },
+                                listState = settingsListState,
+                                topInset = statusBarDp
+                            )
+                            TAB_ABOUT -> AboutScreen(
+                                // 浮层顶栏在关于页不显示：hero 就是页头，只需让出状态栏。
+                                topPadding = statusBarDp,
+                                listState = aboutListState
+                            )
+                        }
                     }
                 }
 
@@ -797,11 +775,11 @@ private fun TodoAppContent(
                     ) {
                         TopAppBar(
                             title = {
-                                // ★ 2026-11-08（§62 起，§64 修订）：Crossfade(180) → AnimatedContent。
-                                //   §64 起用 ImageToolbox 嵌套标题那套 Compose 默认 spec
-                                //   （fadeIn 220ms+90ms 延迟 + scaleIn 0.92），顶栏浮层不随
-                                //   整页滑动。超长标题用官方 basicMarquee 滚动（内容不超过
-                                //   容器宽度时它自己不滚）。
+                                // ★ 2026-11-08（§62 起，§65 保留）：Crossfade(180) → AnimatedContent。
+                                //   §65 撤掉了整屏滑动，但这一处**本来就只包 Text**、容器在动画外，
+                                //   正是 ImageToolbox `TopAppBarTitle.kt` 的文字动效结构，故原样
+                                //   保留：Compose 默认 spec（fadeIn 220ms+90ms 延迟 + scaleIn 0.92）。
+                                //   顶栏是跨 tab 共享浮层，不进 tab 转场；超长标题用 basicMarquee。
                                 AnimatedContent(
                                     targetState = title,
                                     transitionSpec = {
@@ -1096,6 +1074,8 @@ private fun TodoList(
     /** 滚动到位后的回调（参数 = 定位到的待办 id），调用方据此置高亮。 */
     onLocated: (Long) -> Unit = {}
 ) {
+    // ★ §65：在 Composable 作用域里读一次，供下面 LazyColumn 的 item 按行错落。
+    val enterSpec = LocalTextEnter.current
     val empty = todos.isEmpty()
     // 空状态自己淡入淡出；下面仍是 `if (!empty)` 的原始分支，只是不再用 if/else 二选一，
     // 这样空列表和有列表之间切换时不会"闪"一下。
@@ -1160,21 +1140,29 @@ private fun TodoList(
                 bottom = 8.dp
             )
         ) {
-            for (row in rows) {
+            for ((index, row) in rows.withIndex()) {
+                // ★ §65：每 8 行一轮，最多 168ms 延迟；卡片 / 容器不参与。
+                val rowEnter = enterSpec?.copy(order = index % 8)
                 when (row) {
                     is RowItem.BoardTitle -> item(key = "board_${row.board.id}") {
-                        BoardHeader(row.board, Modifier.animateItem())
+                        CompositionLocalProvider(LocalTextEnter provides rowEnter) {
+                            BoardHeader(row.board, Modifier.animateItem())
+                        }
                     }
                     is RowItem.BucketTitle -> item(key = "bucket_${row.bucket.id}") {
-                        BucketHeader(row.bucket, Modifier.animateItem())
+                        CompositionLocalProvider(LocalTextEnter provides rowEnter) {
+                            BucketHeader(row.bucket, Modifier.animateItem())
+                        }
                     }
                     is RowItem.Entry -> item(key = row.todo.id) {
-                        TodoListRow(
-                            row.todo, today, now, row.todo.id in pendingArchive, gestures,
-                            onCircleTap, onSwipeArchive, onTodoEdit,
-                            highlighted = row.todo.id == highlightId,
-                            modifier = Modifier.animateItem()
-                        )
+                        CompositionLocalProvider(LocalTextEnter provides rowEnter) {
+                            TodoListRow(
+                                row.todo, today, now, row.todo.id in pendingArchive, gestures,
+                                onCircleTap, onSwipeArchive, onTodoEdit,
+                                highlighted = row.todo.id == highlightId,
+                                modifier = Modifier.animateItem()
+                            )
+                        }
                     }
                 }
             }
@@ -1779,7 +1767,7 @@ private fun SettingsScreen(
                 //   不像专注环那样在设置页内自读自写 —— 否则开关改了转场不会立刻重组。
                 ToggleItem(
                     "页面切换动效",
-                    "切换四个 tab 时整页水平滑入滑出、文字一起进出场；关掉后直接硬切",
+                    "切换四个 tab 时页面里的文字淡入上滑、按行错落；关掉后直接硬切",
                     pageMotion,
                     onChecked = onSetPageMotion
                 )
