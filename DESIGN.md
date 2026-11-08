@@ -3811,11 +3811,15 @@ alpha + 18dp 上滑。§65 已加勘误，历史保留。
   （APK 字节数与 §65 巧合相同，别据此误判成没重打包）。动效属组合期行为，
   按 §7 不截图 / 不 tap / 不 dump，也不做真机 UI 验收。
 - 按 §5 版本号不动、不发版；Manifest 零改动，合规分支边界未越。
-- ⚠ **本轮 adb 覆盖安装未完成**：按 §6.4 只发 `install -r`，但单进程内
-  `start-server` + 4 次 `devices -l` 重试仍是空表，且 Windows
-  `Get-PnpDevice -PresentOnly` 也查不到 `vivo X100s Pro` / `VID_2D95` ADB 接口 ——
-  与 14:17 那次「daemon 冷启动、枚举时机」不同，这次**设备确实不在线**。
-  未发任何按键、未 tap / dump / 截图；新包停在 `app/build/outputs/apk/release/`，
-  请重新连接 USB 并解锁授权后再装。
+- ✅ **adb 覆盖安装已完成（15:42）**：`install -r` → `Performing Streamed Install / Success`；
+  只读 `dumpsys package` 复核 `versionName=1.0.14` / `versionCode=48` /
+  `lastUpdateTime=2026-11-08 15:42:15`，确认装的是 §66 的 main release 包。
+  按 §6.4 只装不测：未发任何按键、未 tap / dump UI / 截图。
+- ★ 15:40 曾判「设备确实不在线」：单进程内 4 次 `devices -l` 空表，且 Windows
+  `Get-PnpDevice -PresentOnly` 也查不到 `vivo X100s Pro` / `VID_2D95` 接口。
+  15:41 zuige 重新连好 USB 后，**同一套单进程脚本第一次枚举**就列出
+  `10AE721UXN000QG device ... transport_id:1` 并装包成功。
+  → 设备短暂离线时别反复试按键、也别把「PnP 查不到」当成永久结论；
+  重新连好后按同一脚本重试即可（14:17 的「daemon 冷启动枚举时机」踩坑仍适用）。
 - 合规分支本轮不装机（设备是 main 签名），只跑脚本验收；3 个上架材料仍未提交、原样保留。
 - 落地：两条分支各一次提交，见 `git log`。
