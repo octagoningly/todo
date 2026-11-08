@@ -516,10 +516,10 @@ private fun TodoAppContent(
                     // 只吃底栏高度：状态栏由每个列表的 contentPadding.top 负责（见 statusBarDp）。
                     .padding(bottom = padding.calculateBottomPadding())
             ) {
-                // ★ 2026-11-08（§62）：四个 tab 不再 `when(tab)` 硬切。
-                //   参考 ImageToolbox 的 fancySlideTransition（只抄缓动参数，不引依赖）+
-                //   M3 底部导航的 fade through：旧页淡出，新页淡入并带 1/12 屏宽的轻微
-                //   水平位移；按 tab 序号判断前进 / 后退，四页共用一套 spec。
+                // ★ 2026-11-08（§62 起，§64 修订）：四个 tab 不再 `when(tab)` 硬切。
+                //   §64 起照抄 T8RIN/ImageToolbox `fancySlideTransition` 的原参数：整屏
+                //   水平滑入 / 滑出 600ms + fadeIn/fadeOut(300ms, 延迟 100ms)；按 tab
+                //   序号判断前进 / 后退，四页共用一套 spec。只抄参数，不引依赖。
                 //   ★ content lambda 里一律用 `targetTab`，不能用外层的 `tab` —— 过渡期间
                 //     旧页仍在组合，用实时 tab 会让旧页错拿新页的 listState（滚动位置错乱）。
                 //   ★ 系统「减少动态效果」时直接硬切，尊重无障碍设置。
@@ -529,16 +529,31 @@ private fun TodoAppContent(
                         if (reduceMotion) {
                             EnterTransition.None togetherWith ExitTransition.None
                         } else {
-                            val forward = targetState > initialState
-                            val shift: (Int) -> Int = { it / 12 }
-                            (slideInHorizontally(
-                                animationSpec = tween(320, easing = OnelineMotionEasing),
-                                initialOffsetX = { if (forward) shift(it) else -shift(it) }
-                            ) + fadeIn(tween(300, 60, easing = OnelineMotionEasing))) togetherWith
-                                (slideOutHorizontally(
-                                    animationSpec = tween(320, easing = OnelineMotionEasing),
-                                    targetOffsetX = { if (forward) -shift(it) else shift(it) }
-                                ) + fadeOut(tween(180, easing = OnelineMotionEasing)))
+                            // ★ §64：照抄 T8RIN/ImageToolbox `Animations.kt` 的
+                            //   fancySlideTransition 原参数 —— 整屏水平滑入/滑出 600ms
+                            //   + fadeIn/fadeOut(tween(300, 100))。§62 曾把它削成
+                            //   1/12 屏宽 320ms，页面里的文字几乎不动，观感上
+                            //   「只有页面轻轻一晃、文字没有进出场」。
+                            //   `it` 就是整屏宽度；后退时方向反转。
+                            if (targetState > initialState) {
+                                (slideInHorizontally(
+                                    animationSpec = tween(600, easing = OnelineMotionEasing),
+                                    initialOffsetX = { it }
+                                ) + fadeIn(tween(300, 100))) togetherWith
+                                    (slideOutHorizontally(
+                                        animationSpec = tween(600, easing = OnelineMotionEasing),
+                                        targetOffsetX = { -it }
+                                    ) + fadeOut(tween(300, 100)))
+                            } else {
+                                (slideInHorizontally(
+                                    animationSpec = tween(600, easing = OnelineMotionEasing),
+                                    initialOffsetX = { -it }
+                                ) + fadeIn(tween(300, 100))) togetherWith
+                                    (slideOutHorizontally(
+                                        animationSpec = tween(600, easing = OnelineMotionEasing),
+                                        targetOffsetX = { it }
+                                    ) + fadeOut(tween(300, 100)))
+                            }
                         }
                     },
                     modifier = Modifier
@@ -749,17 +764,24 @@ private fun TodoAppContent(
                     ) {
                         TopAppBar(
                             title = {
-                                // ★ 2026-11-08（§62）：Crossfade(180) → AnimatedContent 交叉淡变，
-                                //   与 tab 内容共用同一条缓动；超长标题用官方 basicMarquee 滚动
-                                //   （内容不超过容器宽度时它自己不滚）。
+                                // ★ 2026-11-08（§62 起，§64 修订）：Crossfade(180) → AnimatedContent。
+                                //   §64 起用 ImageToolbox 嵌套标题那套 Compose 默认 spec
+                                //   （fadeIn 220ms+90ms 延迟 + scaleIn 0.92），顶栏浮层不随
+                                //   整页滑动。超长标题用官方 basicMarquee 滚动（内容不超过
+                                //   容器宽度时它自己不滚）。
                                 AnimatedContent(
                                     targetState = title,
                                     transitionSpec = {
                                         if (reduceMotion) {
                                             EnterTransition.None togetherWith ExitTransition.None
                                         } else {
-                                            fadeIn(tween(220, easing = OnelineMotionEasing)) togetherWith
-                                                fadeOut(tween(160, easing = OnelineMotionEasing))
+                                            // ★ §64：ImageToolbox `TopAppBarTitle.kt` 里嵌套标题
+                                            //   没写 spec，用的就是 Compose 默认这套
+                                            //   （fadeIn 220+90ms delay + scaleIn 0.92）；
+                                            //   显式写出来只是为了保留上面的减少动画硬切分支。
+                                            (fadeIn(tween(220, 90)) +
+                                                scaleIn(initialScale = 0.92f, animationSpec = tween(220, 90))) togetherWith
+                                                fadeOut(tween(90))
                                         }
                                     },
                                     label = "topBarTitle"
@@ -1667,7 +1689,7 @@ private fun SettingsScreen(
                 //   不像专注环那样在设置页内自读自写 —— 否则开关改了转场不会立刻重组。
                 ToggleItem(
                     "页面切换动效",
-                    "切换四个 tab 时淡入淡出与轻微滑动；关掉后直接硬切",
+                    "切换四个 tab 时整页水平滑入滑出、文字一起进出场；关掉后直接硬切",
                     pageMotion,
                     onChecked = onSetPageMotion
                 )

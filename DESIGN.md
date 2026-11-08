@@ -3591,6 +3591,10 @@ zuige 第三次拍板：不要额外符号，句中写「标签作业」，「�
 
 ## §62 四个 tab 统一转场 + 顶栏文字动效（合规分支适配，2026-11-08）
 
+> ⚠ **勘误（2026-11-08，§64）**：本分支 §62 的动效规格同样被 §64 修订为
+> ImageToolbox 原参数（整屏 600ms 水平滑动 + 顶栏 Compose 默认 fade/scale），
+> 详见下文 §64；本节的结构结论（四页统一转场、`targetTab`）仍成立。
+
 > 与 main `DESIGN.md §62` 同题；ImageToolbox 源码结论、动效规格、四级实现顺序与
 > 三个防坑以 main 那节为准，这里只记本分支的搬运结果与边界核对。
 
@@ -3649,4 +3653,29 @@ zuige 第三次拍板：不要额外符号，句中写「标签作业」，「�
   全 `EXIT=0`；按 §5 不发版。本轮 adb 安装**只装 main 包**，不装合规分支包。
 - 落地：本分支 `5b350c0`，对应 main `f02c66e`；产物 2,060,020 字节。
   3 个上架材料（`PrivacyScreen.kt` / `SettingsRepo.kt` / `docs/PRIVACY.md`）仍未提交、原样保留。
+
+---
+
+## §64 按 ImageToolbox 原参数还原「文字进出场」（合规分支适配，2026-11-08）
+
+> 与 main `DESIGN.md §64` 同题；源码查证、参数表、四级结论与架构差异以 main 那节为准，
+> 这里只记本分支适配与边界核对。
+
+- zuige 反馈「文字动效还是没有」，要求「使用那个开源项目的做法」；二次查证确认
+  §62 把 ImageToolbox 的整屏 600ms 水平滑动削成 1/12 屏宽 320ms，是观感消失的根因。
+- 本分支 `TodoListScreen.kt` 两处 `transitionSpec` 按同一套 diff 手工改：
+  tab 内容改回 `slideInHorizontally(tween(600, OnelineMotionEasing), { it }) +
+  fadeIn(tween(300, 100))` 的整屏前进 / 后退双向 spec；顶栏标题改成 Compose 默认
+  `(fadeIn(tween(220, 90)) + scaleIn(initialScale = 0.92f, tween(220, 90))) togetherWith fadeOut(tween(90))`。
+  `scaleIn` 用命名参数；本分支原已有 `scaleIn` import，无需新增。
+- `reduceMotion` 两个分支、§63 开关与系统减少动画优先级不变；设置项说明与
+  `README.md` 外观段同步改成「整页水平滑入滑出、文字一起进出场」；§62 加勘误。
+- ★ 边界核对（AGENTS §4）：本轮只改 `TodoListScreen.kt` 的动画参数与文案；
+  Manifest 零改动，无 `INTERNET` / `update/` / `UpdateDialog.kt`；关于页「没有应用内
+  检查更新（v1.0.0 起）」仍在；纯 UI 偏好，无新权限 / 无数据类别变化 →
+  `PRIVACY_POLICY_VERSION` 不动、`docs/PRIVACY.md` 不改。
+- 验证：`:app:testDebugUnitTest` / `:app:assembleRelease` 全 `EXIT=0`；按 §6.4 不连设备、
+  不装机、不 tap / dump；按 §5 版本号不动、不发版，vivo 商店后台与博客源都不碰。
+- 落地：本分支一次提交，见 `git log`。3 个上架材料（`PrivacyScreen.kt` /
+  `SettingsRepo.kt` / `docs/PRIVACY.md`）仍未提交、原样保留。
 
