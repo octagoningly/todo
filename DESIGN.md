@@ -4879,7 +4879,16 @@ ImageToolbox 的整屏滑动是「页面栈推入」语境，照搬会让切 tab
 - 按 §60.6 / AGENTS §6.4 **只跑本地脚本**：`:app:compileDebugKotlin` →
   `:app:testDebugUnitTest` → `:app:assembleRelease`；不连设备、不装机、不 tap / dump。
 - 按 AGENTS §5：版本号不动（仍 `1.0.14 / 48`），不发版、不碰两个源与博客文章。
-- 按 AGENTS §4 两条分支各落一次，commit 见本节末尾「落地结果」补记。
+- 按 AGENTS §4 两条分支各落一次。
+
+### 62.6 落地结果
+
+- main `798996e`（功能 + `README.md` / §61 勘误 + 本节）；
+  合规分支 `612a38d`（同一套 diff 手工搬运，按该分支基线适配，见其 `DESIGN.md §62`）。
+- 两边本次产物：main `app-release.apk` **2,109,692 字节**（09:13）、
+  合规分支 **2,060,020 字节**（09:19）；版本号各自不动、未发版、未装机。
+- 收尾复核：`git status --short` 确认 main 的 `output/` / `show/`、`dist/` 与
+  合规分支 3 个上架材料都没进提交。
 
 ### 62.7 遗留
 
