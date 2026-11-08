@@ -176,7 +176,14 @@
 2. 按第 2 节四级顺序实现；能复用就不新写。
 3. 功能改动**两条分支各落一次**（第 4 节）；合规分支不越界。
 4. `:app:testDebugUnitTest` → `:app:assembleRelease` → **本地脚本验收**。改完代码不用等 zuige 说就跑构建，构建不等于发版。
-   ★ **zuige 2026-11-07：「测试不要控制我手机，直接脚本测试就好了」** —— 默认不连设备、不装机、不 `input tap`、不 dump UI；原真机验收清单一律固化成 JVM 单测（带 `Context` / `org.json` 的除外，见 §7）。确需真机（如 Room 迁移、SAF 选文件）必须**先单独征得同意**；§7 的真机条目只在这种授权后适用。
+   ★ **zuige 2026-11-08 定稿：「adb 装机是允许的，但是不要 adb 随意操控手机与截图查看」**
+   —— 覆盖安装（含 `adb install -r`）**属于允许动作，不必每轮单独请示**；
+   但一律不做 `input tap` / 输入文字 / `keyevent` 唤醒 / `uiautomator dump` /
+   截图 / 看 UI 等操控与查看动作，也不做真机 UI 验收。2026-11-07
+   「测试不要控制我手机测试，直接脚本测试就好了」的原则不变。
+   验收清单一律固化成 JVM 单测（带 `Context` / `org.json` 的除外，见 §7）。
+   ★ 锁屏导致 `INSTALL_FAILED_ABORTED` 时**不要发按键绕过**，直接请 zuige 手动解锁后重试安装。
+   确需真机交互验证（如 Room 迁移、SAF 选文件）仍必须**先单独征得同意**；§7 的真机条目只在这种授权后适用。
 5. **改完文件必须更新对应的 md**（第 0 节分工）：功能 → `README.md` + `DESIGN.md` 追加节；规矩 → 本文件；领域专题 → `docs/*`。
 6. `git status --short` 核对后**按具体路径 `git add` + `git commit`**，每轮功能改动收尾立刻提交，不等 zuige 说。
    ★ **禁止 `git add -A`**；别带 `output/`、`show/`、`dist/`、`docs/COPYRIGHT.md`（除非明确要求一并提交）。
@@ -191,6 +198,7 @@
 - ★ Room 加列必须**显式写与实体 `@ColumnInfo(defaultValue)` 一致的 DEFAULT**（可空列 `DEFAULT NULL`，非空串列 `DEFAULT ''`）+ `hasColumn` 幂等（0.9.3 漏 `DEFAULT` 秒崩）；schema 变更要跑 `:app:connectedDebugAndroidTest` 的 `MigrationTestHelper` 迁移链测试，并同步 `BackupRules.DB_VERSION` 与 `app/schemas/.../<v>.json`。
 - 判定 / 阈值 / 格式化放**无 Android 依赖的纯函数**才能本地单测；`org.json` 在本地单测里是 stub，编解码只能真机验。
 - **验收别截图**：看 `adb logcat -s TodoWidget:D`、`uiautomator dump` 的文本 bounds；交互用 `adb shell input tap`。
+  ⚠ **以上为 2026-11-07 前的历史真机验收手法，现行默认不执行**（§6.4：装机允许，但不得操控手机 / dump UI / 截图）；仅在 zuige 单独授权真机交互验证时才适用。
 - ★ 锁屏安装必失败 `INSTALL_FAILED_ABORTED`；查 `dumpsys window | grep mDreamingLockscreen`，UI 验收必须解锁。
 - 精确闹钟：`USE_EXACT_ALARM` + `SCHEDULE_EXACT_ALARM` 都在 Manifest，13+ 后者默认拒绝时降级 `setAndAllowWhileIdle`；排查 `cmd appops get <pkg> android:schedule_exact_alarm`、`dumpsys alarm | grep <pkg>`。
 - 恢复备份**绝不 `activity.recreate()`**（vivo 会露出黑色 windowBackground → 上下黑边），改走 `BackupManager.restoreCompleted` → `key(settingsEpoch)` 重建 Compose 子树。
