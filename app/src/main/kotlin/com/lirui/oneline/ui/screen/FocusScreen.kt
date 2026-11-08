@@ -1,6 +1,7 @@
 package com.lirui.oneline.ui.screen
 
 import android.os.SystemClock
+import com.lirui.oneline.ui.theme.systemReduceMotion
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -276,19 +277,8 @@ fun FocusScreen(onClose: () -> Unit) {
 private const val PAGE_TIMER = 0
 private const val PAGE_STATS = 1
 
-/**
- * 系统是否关掉了动画（无障碍里的「减少动态效果」/ 开发者选项把动画时长设成 0）。
- * 读不到或抛异常时按"没关"处理 —— 宁可多放一点动效，也别把开关变成哑的。
- */
-private fun systemReduceMotion(context: android.content.Context): Boolean = try {
-    android.provider.Settings.Global.getFloat(
-        context.contentResolver,
-        android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
-        1f
-    ) == 0f
-} catch (_: Exception) {
-    false
-}
+// 系统「减少动态效果」判定已抽到 ui/theme/Motion.kt（§62 起 tab 转场 / 顶栏标题共用），
+// 判定口径与此处原实现完全一致。
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 计时

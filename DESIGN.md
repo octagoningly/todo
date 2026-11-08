@@ -4732,6 +4732,11 @@ zuige 看过 §59 的效果后直接否掉：「这样不太好，我的初衷�
 
 ## §61 撤掉关于页的整页推入，四个 tab 统一硬切（2026-11-07）
 
+> ⚠ **勘误（2026-11-08）**：本节「四页统一硬切」的口径**已被 §62 推翻**。
+> zuige 看过 `T8RIN/ImageToolbox` 的动效源码后选「连 tab 切换一起做」，四个 tab 改为
+> 共用一套转场。本节保留作为「为什么先撤掉关于页单独推入」的历史记录：撤掉那处
+> **不对称**的整页动画仍然成立，只是替代方案不是硬切，而是四页统一动效。
+
 ### 61.1 现象与根因
 
 zuige：「我发现关于页面跟其他页面的进入方式好像不一样，关于页面是从下向上来的」。
@@ -4782,3 +4787,103 @@ zuige 选「**去掉推入，四页统一硬切**」。
   「没有应用内检查更新（v1.0.0 起）」仍在，无 `UpdateService` / `INTERNET` / 检查更新行；
   Manifest 零改动、无 `update/` 模块；3 个上架材料保持未提交。
 - 两边 `:app:compileDebugKotlin` / `:app:testDebugUnitTest` / `:app:assembleRelease` 均 `EXIT=0`，未装机。
+
+---
+
+## §62 四个 tab 统一转场 + 顶栏文字动效（2026-11-08，推翻 §61 硬切口径）
+
+### 62.1 背景：从「找开源文字动效」到「抄 ImageToolbox 的缓动」
+
+zuige 先问「有没有那种开源的文字进出场动效，切换页面文字有动效」，随后点名
+「image toolbox 的文字动效做得很好，帮我看看是什么动效，可以去 GitHub 看源码」。
+查证 `T8RIN/ImageToolbox`（Apache-2.0，Kotlin + Compose，Decompose 导航）后确认：
+
+- **顶栏文字**（`core/ui/.../widget/text/TopAppBarTitle.kt`）= `AnimatedContent` +
+  `fadeIn() togetherWith fadeOut()` 的**交叉淡变**，不是打字机 / 逐字 stagger / Lottie；
+  `targetState` 带 `Triple(title, isLoading, size)`，内容一变就重播。
+  超宽标题另叠 `Marquee.kt`：量到 `contentWidth > containerWidth` 才启动
+  `basicMarquee(iterations = Int.MAX_VALUE, velocity = 48.dp, repeatDelayMillis = 1500)`，
+  两端 10.dp 渐隐边缘。
+- **页面转场**（`.../animation/Animations.kt`）= `fancySlideTransition`：
+  水平滑入滑出 600ms + `fadeIn/fadeOut(tween(300, 100))`，曲线
+  `FancyTransitionEasing = CubicBezierEasing(0.48f, 0.19f, 0.05f, 1.03f)`；
+  `Easing.kt` 另有一组自定义贝塞尔。末端 y > 1 的**轻微过冲**才是「高级感」主因。
+
+对照本项目：`TodoListScreen.kt` 顶栏已有 `Crossfade(tween(180))`（与 A 同类，但更短、
+默认缓动、无 marquee），完成条已有 `AnimatedContent + slideInVertically + fadeIn togetherWith fadeOut`，
+四 tab 却是 `when(tab)` 硬切。**差距不是「没有动效」，是缺统一缓动 + 长标题处理 + tab 转场**。
+
+给 zuige 四个选项，他选「**连 tab 切换一起做**」——即同时包含顶栏文字升级与四页转场，
+并明确接受这**推翻 §61 刚定的「四页统一硬切」**。§61 已加勘误，本节为现行口径。
+
+### 62.2 四级实现顺序结论（AGENTS §2）
+
+1. **复用旧模块**：`TodoListScreen` 里已有的 `AnimatedContent` / `Crossfade`、主题里的
+   `MaterialExpressiveTheme(motionScheme = MotionScheme.expressive())`，以及
+   `FocusScreen.kt` 里「系统减少动态效果」的判定 —— 按 §2「跨页复用先抽到共用文件，
+   别复制粘贴」，把 `systemReduceMotion()` 抽到 `ui/theme/Motion.kt`，专注环与 tab 转场共用。
+2. **Google 官方**：`AnimatedContent` + `slideInHorizontally/slideOutHorizontally` +
+   `fadeIn/fadeOut` + `CubicBezierEasing` + `Modifier.basicMarquee`，全是官方 API；
+   `basicMarquee` 在内容不超宽时自己不滚，不需要量宽后条件启动。
+3. **开源参考**：只抄 ImageToolbox 的**缓动曲线参数与时序思路**，注明出处 / License；
+   **不引入依赖** —— 它的两端渐隐用了 `com.gigamole.composefadingedges`，
+   本项目标题都是 2~4 字短词，用不上，按 §1「不为单一小功能引入大框架」不引。
+4. **手写**：没有手写新动画逻辑；纯函数 / 数据层 / 存储层零改动，因此不新增 JVM 单测
+   （动效是组合期行为，项目无 Robolectric，按 §7 归脚本编译 + release 验收）。
+
+### 62.3 动效规格（四页 + 顶栏共用一条曲线）
+
+| 项 | 规格 |
+|---|---|
+| 缓动 | `OnelineMotionEasing = CubicBezierEasing(0.48f, 0.19f, 0.05f, 1.03f)`（ImageToolbox 参数） |
+| tab 内容 | 新页 `slideInHorizontally(tween(320))` 位移 `1/12` 屏宽 + `fadeIn(tween(300, 60))`；旧页反向位移 `1/12` + `fadeOut(tween(180))` |
+| 方向 | `targetState > initialState` = 前进（右进左出），否则反向；四个 tab 序号即导航顺序 |
+| 顶栏标题 | `Crossfade(180)` → `AnimatedContent`，`fadeIn(tween(220)) togetherWith fadeOut(tween(160))`；`Text` 加 `basicMarquee(Int.MAX_VALUE, 48.dp, 1500)` |
+| 减少动画 | `systemReduceMotion(context)` 为真时两者都 `EnterTransition.None togetherWith ExitTransition.None`（硬切） |
+| 底色 | 转场容器 `Modifier.fillMaxSize().background(colorScheme.background)`，避免过渡期间两层半透明页面互相透出 |
+
+**刻意不做整屏 600ms 滑动**：底部导航是同级切换，M3 推荐 fade through；
+ImageToolbox 的整屏滑动是「页面栈推入」语境，照搬会让切 tab 显得又重又慢。
+所以只取它的曲线，位移压到 `1/12` 屏宽。
+
+### 62.4 改动清单
+
+- 新增 `ui/theme/Motion.kt`：`systemReduceMotion(context)`（从 `FocusScreen` 抽出）+
+  `OnelineMotionEasing`。
+- `FocusScreen.kt`：删本地 `private fun systemReduceMotion`，改 import 共用版本；
+  专注环行为不变。
+- `TodoListScreen.kt`：
+  · `Crossfade` import 换成 `EnterTransition` / `ExitTransition` /
+    `slideInHorizontally` / `slideOutHorizontally`，加 `basicMarquee`（`@file:OptIn`
+    补 `ExperimentalFoundationApi`）、两个 theme import；
+  · 顶栏标题改 `AnimatedContent` 交叉淡变 + `basicMarquee`；
+  · `when(tab)` 整体包进 `AnimatedContent(targetState = tab, label = "tabContent")`；
+  · 新增 `val reduceMotion = systemReduceMotion(context)` 供两处共用。
+- `README.md`「外观」补一段动效说明；`DESIGN.md` §61 加勘误 + 本节。
+- **不改**：`AGENTS.md`（规矩未变）、`docs/PRIVACY.md`（无权限 / 数据变化）、
+  版本号 / Release / Hexo / 博客文章（按 §5 日常功能改动不发版）。
+
+### 62.5 三个关键防坑
+
+1. ★ **content lambda 里一律用 `targetTab`，不能用外层 `tab`**：`AnimatedContent` 过渡期间
+   旧页仍在组合，用实时 `tab` 会让旧页错拿新页的 `listState`，滚动位置错乱。
+   四个 `rememberLazyListState` 本来就在外层各自提升，每个分支传自己的那份，
+   所以只需要换「选分支」的变量，不用改状态提升结构。
+2. ★ **不把顶栏 / FAB / 完成条包进转场**：它们本来就在 `when` 外面按实时 `tab` 显隐，
+   保持原状；只有页面内容参与转场，避免浮层跟着一起滑。
+3. ★ **关于页仍是四页之一，没有独立的整页入场动画**（§61 撤掉的推入不恢复），
+   现在它和其它三页走同一套 spec —— 这才是 §61 想解决的「不对称」的正解。
+
+### 62.6 验证与收尾
+
+- 按 §60.6 / AGENTS §6.4 **只跑本地脚本**：`:app:compileDebugKotlin` →
+  `:app:testDebugUnitTest` → `:app:assembleRelease`；不连设备、不装机、不 tap / dump。
+- 按 AGENTS §5：版本号不动（仍 `1.0.14 / 48`），不发版、不碰两个源与博客文章。
+- 按 AGENTS §4 两条分支各落一次，commit 见本节末尾「落地结果」补记。
+
+### 62.7 遗留
+
+- 动效观感（时长 / 位移幅度 / 过冲是否合适）属于肉眼项，按新口径**不做真机验收**；
+  若 zuige 之后觉得偏慢或偏晃，只改 `OnelineMotionEasing` 与三个 `tween` 参数即可。
+- `basicMarquee` 两端渐隐边缘未做（依赖第三方库），当前短标题不触发滚动。
+- §60 遗留的 v7→v8 真机迁移 / 备份恢复 / 重复顺延标签不丢仍待单独授权（Task #6）。
