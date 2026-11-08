@@ -1,19 +1,11 @@
 package com.lirui.oneline.ui.theme
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -23,20 +15,18 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
-import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
 
 /**
- * §65 文字级进场的作用域参数。
+ * §66 文字级「末端展开 / 末端收起」的作用域参数。
  *
- * @param replayKey  换页（tab）时换一个值，让这一层的所有文字重新播一次进场。
- * @param order      按行错落的序号；实际延迟 = order * 24ms，封顶 240ms。
+ * @param visible true = 显示整句文字；false = 收起到空串（宽度 0、仍占一行高度）。
  * @param reduceMotion 系统「减少动态效果」或设置里关掉「页面切换动效」时不播。
+ * @param replayKey 当前所在的 tab，仅用于说明与调试；显隐由 [visible] 驱动。
  */
 data class TextEnterSpec(
-    val replayKey: Any,
+    val visible: Boolean,
     val reduceMotion: Boolean = false,
-    val order: Int = 0
+    val replayKey: Any? = null
 )
 
 /**
@@ -46,49 +36,32 @@ data class TextEnterSpec(
 val LocalTextEnter = staticCompositionLocalOf<TextEnterSpec?> { null }
 
 /**
- * 只给**文字本身**加淡入 + 轻微上滑。
+ * 与 M3 `Text` 同签名的包装：四个 tab 页面里的文字统一获得官方默认转场。
  *
- * ★ 结构参考 `T8RIN/ImageToolbox`（Apache-2.0）：
- *   `PreferenceItemOverload.kt` / `PreferenceRow.kt` / `TopAppBarTitle.kt` 里
- *   `AnimatedContent` 只包住 `Text`，`Card` / `Row` / 图标全在动画作用域外。
- *   本项目用官方 `graphicsLayer + animateFloatAsState` 达到同样的「只有文字动」，
- *   而且文字始终占位、不会像 `AnimatedVisibility` 那样把卡片高度撑开。
- *   源码的 spec 是 `fadeIn() togetherWith fadeOut()`；这里按 §65 的方案加了
- *   18dp 上滑与按行错落，让「文字进出场」更明显。只借结构与思路，不引依赖。
- */
-@Composable
-fun Modifier.textEnter(): Modifier {
-    val spec = LocalTextEnter.current ?: return this
-    if (spec.reduceMotion) return this
-
-    val shiftPx = with(LocalDensity.current) { 18.dp.toPx() }
-    var shown by remember(spec.replayKey) { mutableStateOf(false) }
-    LaunchedEffect(spec.replayKey) {
-        delay((spec.order * 24).coerceAtMost(240).toLong())
-        shown = true
-    }
-    val alpha by animateFloatAsState(
-        targetValue = if (shown) 1f else 0f,
-        animationSpec = tween(220),
-        label = "textEnterAlpha"
-    )
-    val shift by animateFloatAsState(
-        targetValue = if (shown) 0f else shiftPx,
-        animationSpec = tween(260, easing = OnelineMotionEasing),
-        label = "textEnterShift"
-    )
-    // graphicsLayer 只影响绘制层：不改测量结果，卡片背景 / 圆圈 / 徽章一律不动。
-    return this.graphicsLayer {
-        this.alpha = alpha
-        translationY = shift
-    }
-}
-
-/**
- * 与 M3 `Text` 同签名的包装：四个 tab 页面里的文字统一获得 [textEnter]。
+ * ★ 严格照 `T8RIN/ImageToolbox`（Apache-2.0）的结构：`AnimatedContent` **只包 `Text`**，
+ *   `Card` / `Row` / 图标 / 背景全在动画作用域外（`PreferenceItemOverload.kt`、
+ *   `PreferenceRow.kt`、`MainTopAppBar.kt`、`TopAppBarTitle.kt`）。只借结构，不引依赖。
  *
- * 用「换 import」而不是逐个改 `Text(...)` 调用，是为了让作用域严格落在文字上：
- * 只要某个文件不引入这个别名（顶栏外的弹窗 / 添加面板 / 专注页），它就完全不受影响。
+ * ★ 这里**故意不写 `transitionSpec`**，走 `AnimatedContentDefaults.ContentTransform`：
+ *   ```
+ *   (fadeIn(tween(220, delayMillis = 90)) +
+ *    scaleIn(initialScale = 0.92f, tween(220, delayMillis = 90)))
+ *       togetherWith fadeOut(tween(90))
+ *   ```
+ *   而 `ContentTransform` 的 `sizeTransform` 默认就是 `SizeTransform()`
+ *   （`clip = true` + `spring(StiffnessMediumLow)`），**即使显式写了 spec 也不会消失**。
+ *   默认 `contentAlignment = Alignment.TopStart`：文字左上角钉住，容器宽度变化时
+ *   裁剪边界停在句子右端（末端）—— 宽度 0→full 就是「往末端展开」，
+ *   full→0 就是「从末端收起」；`fadeOut(90)` + `scaleIn(0.92f)` 即「先回撤一下」。
+ *
+ * ★ 收起态用**空串**而不是空 composable：Compose 的空串 `Text` 仍占一行高度，
+ *   宽度却是 0 —— 卡片高度不塌，`SizeTransform` 才有宽度可动画。
+ *
+ * ★ `modifier` 挂在 `AnimatedContent` 容器上，保证 `weight` / `fillMaxWidth` / `align`
+ *   仍作用在原位置的那个 child 上，布局与改造前一致。
+ *
+ * 用「换 import」而不是逐个改 `Text(...)` 调用来收口作用域：只要某个文件不引入
+ * 这个别名（顶栏外的弹窗 / 添加面板 / 专注页），它就完全不受影响。
  */
 @Composable
 fun Text(
@@ -110,23 +83,52 @@ fun Text(
     onTextLayout: ((TextLayoutResult) -> Unit)? = null,
     style: TextStyle = LocalTextStyle.current
 ) {
-    androidx.compose.material3.Text(
-        text = text,
-        modifier = modifier.textEnter(),
-        color = color,
-        fontSize = fontSize,
-        fontStyle = fontStyle,
-        fontWeight = fontWeight,
-        fontFamily = fontFamily,
-        letterSpacing = letterSpacing,
-        textDecoration = textDecoration,
-        textAlign = textAlign,
-        lineHeight = lineHeight,
-        overflow = overflow,
-        softWrap = softWrap,
-        maxLines = maxLines,
-        minLines = minLines,
-        onTextLayout = onTextLayout,
-        style = style
-    )
+    val spec = LocalTextEnter.current
+    if (spec == null || spec.reduceMotion) {
+        androidx.compose.material3.Text(
+            text = text,
+            modifier = modifier,
+            color = color,
+            fontSize = fontSize,
+            fontStyle = fontStyle,
+            fontWeight = fontWeight,
+            fontFamily = fontFamily,
+            letterSpacing = letterSpacing,
+            textDecoration = textDecoration,
+            textAlign = textAlign,
+            lineHeight = lineHeight,
+            overflow = overflow,
+            softWrap = softWrap,
+            maxLines = maxLines,
+            minLines = minLines,
+            onTextLayout = onTextLayout,
+            style = style
+        )
+        return
+    }
+
+    AnimatedContent(
+        targetState = if (spec.visible) text else "",
+        modifier = modifier,
+        label = "textReveal"
+    ) { target ->
+        androidx.compose.material3.Text(
+            text = target,
+            color = color,
+            fontSize = fontSize,
+            fontStyle = fontStyle,
+            fontWeight = fontWeight,
+            fontFamily = fontFamily,
+            letterSpacing = letterSpacing,
+            textDecoration = textDecoration,
+            textAlign = textAlign,
+            lineHeight = lineHeight,
+            overflow = overflow,
+            softWrap = softWrap,
+            maxLines = maxLines,
+            minLines = minLines,
+            onTextLayout = onTextLayout,
+            style = style
+        )
+    }
 }
