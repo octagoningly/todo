@@ -1,6 +1,7 @@
 @file:OptIn(
     androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class,
     androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
     androidx.compose.foundation.layout.ExperimentalLayoutApi::class
 )
 
@@ -14,7 +15,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -22,7 +24,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Animatable
@@ -34,6 +38,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -140,6 +145,8 @@ import com.lirui.oneline.reminder.NotificationHelper
 import com.lirui.oneline.ui.MainViewModel
 import com.lirui.oneline.ui.CIRCLE_FILL_MILLIS
 import com.lirui.oneline.ui.theme.DarkCardStyle
+import com.lirui.oneline.ui.theme.OnelineMotionEasing
+import com.lirui.oneline.ui.theme.systemReduceMotion
 import com.lirui.oneline.ui.theme.Palette
 import com.lirui.oneline.ui.theme.Palettes
 import com.lirui.oneline.ui.theme.actionContainer
@@ -458,6 +465,10 @@ private fun TodoAppContent(
         else -> "关于"
     }
 
+    // ★ §62：系统关掉动画（无障碍「减少动态效果」/ 开发者选项动画时长 0）时，
+    //   tab 内容与顶栏标题都直接硬切。
+    val reduceMotion = systemReduceMotion(context)
+
     Box(Modifier.fillMaxSize()) {
         Scaffold(
             // ★ 自己管状态栏：Scaffold 的 contentWindowInsets 一律清零。
@@ -500,121 +511,152 @@ private fun TodoAppContent(
                     // 只吃底栏高度：状态栏由每个列表的 contentPadding.top 负责（见 statusBarDp）。
                     .padding(bottom = padding.calculateBottomPadding())
             ) {
-                when (tab) {
-                    TAB_TODO -> TodoList(
-                        active,
-                        boardOrder,
-                        hiddenBoards,
-                        homeBuckets,
-                        pendingArchive = pendingArchive,
-                        gestures = rememberGestures(),
-                        topInset = statusBarDp,
-                        onCircleTap = { todo ->
-                            // 点圆圈：先播 650ms 填充动画，动画走完再写库。计时器在 ViewModel 里，
-                            // 行被回收（快速滑动）也不会中断 —— 这是 v0.3 归档失效的根因修复。
-                            vm.requestArchive(todo.id, animate = true)
-                            // A repeating todo rolls forward instead of archiving, and undo cannot
-                            // restore that, so only show the completion bar for real archiving.
-                            val rollsForward =
-                                todo.repeatDays > 0 && SettingsRepo.autoRepeatEnabled(context)
-                            if (!rollsForward) justCompleted = todo
-                        },
-                        onSwipeArchive = { todo ->
-                            // 右滑：行已经滑出屏幕，立即写库，不再等动画。
-                            vm.requestArchive(todo.id, animate = false)
-                            val rollsForward =
-                                todo.repeatDays > 0 && SettingsRepo.autoRepeatEnabled(context)
-                            if (!rollsForward) justCompleted = todo
-                        },
-                        onTodoEdit = { todo ->
-                            editTarget = todo
-                            vm.previewExisting(todo)
-                            showAdd = true
-                        },
-                        listState = todoListState,
-                        scrollToTodoId = scrollToTodoId,
-                        highlightId = highlightId,
-                        onScrollHandled = { scrollToTodoId = -1L },
-                        onLocated = { highlightId = it }
-                    )
-                    TAB_ARCHIVED -> ArchivedList(
-                        archived,
-                        onRestore = { vm.unarchive(it) },
-                        onDelete = { vm.delete(it) },
-                        listState = archivedListState,
-                        topInset = statusBarDp,
-                        scrollToTodoId = scrollToTodoId,
-                        highlightId = highlightId,
-                        onScrollHandled = { scrollToTodoId = -1L },
-                        onLocated = { highlightId = it }
-                    )
-                    TAB_SETTINGS -> SettingsScreen(
-                        themeMode = themeMode,
-                        onSetThemeMode = onSetThemeMode,
-                        immersive = immersive,
-                        onSetImmersive = { immersive = it },
-                        paletteId = paletteId,
-                        onSetPalette = onSetPalette,
-                        darkCardStyleId = darkCardStyleId,
-                        onSetDarkCardStyle = onSetDarkCardStyle,
-                        remindersEnabled = remindersEnabled,
-                        onSetRemindersEnabled = { on ->
-                            onSetRemindersEnabled(on)
-                            onRescheduleReminders()
-                        },
-                        remindAtDue = remindAtDue,
-                        onSetRemindAtDue = { on ->
-                            onSetRemindAtDue(on)
-                            onRescheduleReminders()
-                        },
-                        remindInAdvance = remindInAdvance,
-                        onSetRemindInAdvance = { on ->
-                            onSetRemindInAdvance(on)
-                            onRescheduleReminders()
-                        },
-                        overdueNag = overdueNag,
-                        onSetOverdueNag = { on ->
-                            onSetOverdueNag(on)
-                            onRescheduleReminders()
-                        },
-                        overdueInterval = overdueInterval,
-                        onSetOverdueInterval = { hours ->
-                            onSetOverdueInterval(hours)
-                            onRescheduleReminders()
-                        },
-                        boardOrder = boardOrder,
-                        onSetBoardOrder = onSetBoardOrder,
-                        hiddenBoards = hiddenBoards,
-                        onSetHiddenBoards = onSetHiddenBoards,
-                        homeBuckets = homeBuckets,
-                        onSetHomeBuckets = onSetHomeBuckets,
-                        defaultMinuteOfDay = defaultMinuteOfDay,
-                        onSetDefaultMinuteOfDay = onSetDefaultMinuteOfDay,
-                        autoRepeat = autoRepeat,
-                        onSetAutoRepeat = onSetAutoRepeat,
-                        onRescheduleReminders = onRescheduleReminders,
-                        onExactAlarmSettings = onExactAlarmSettings,
-                        onTestNotification = {
-                            if (NotificationHelper.canPostNotifications(context)) {
-                                NotificationHelper.postTest(
-                                    context,
-                                    "通知测试",
-                                    SettingsRepo.notificationStyle(context).dueWord,
-                                    quote = Quotes.random(context)
-                                )
-                            } else {
-                                Toast.makeText(context, "请先允许通知权限", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        onTestTodo = { vm.addTestInOneMinute() },
-                        listState = settingsListState,
-                        topInset = statusBarDp
-                    )
-                    TAB_ABOUT -> AboutScreen(
-                        // 浮层顶栏在关于页不显示：hero 就是页头，只需让出状态栏。
-                        topPadding = statusBarDp,
-                        listState = aboutListState
-                    )
+                // ★ 2026-11-08（§62）：四个 tab 不再 `when(tab)` 硬切。
+                //   参考 ImageToolbox 的 fancySlideTransition（只抄缓动参数，不引依赖）+
+                //   M3 底部导航的 fade through：旧页淡出，新页淡入并带 1/12 屏宽的轻微
+                //   水平位移；按 tab 序号判断前进 / 后退，四页共用一套 spec。
+                //   ★ content lambda 里一律用 `targetTab`，不能用外层的 `tab` —— 过渡期间
+                //     旧页仍在组合，用实时 tab 会让旧页错拿新页的 listState（滚动位置错乱）。
+                //   ★ 系统「减少动态效果」时直接硬切，尊重无障碍设置。
+                AnimatedContent(
+                    targetState = tab,
+                    transitionSpec = {
+                        if (reduceMotion) {
+                            EnterTransition.None togetherWith ExitTransition.None
+                        } else {
+                            val forward = targetState > initialState
+                            val shift: (Int) -> Int = { it / 12 }
+                            (slideInHorizontally(
+                                animationSpec = tween(320, easing = OnelineMotionEasing),
+                                initialOffsetX = { if (forward) shift(it) else -shift(it) }
+                            ) + fadeIn(tween(300, 60, easing = OnelineMotionEasing))) togetherWith
+                                (slideOutHorizontally(
+                                    animationSpec = tween(320, easing = OnelineMotionEasing),
+                                    targetOffsetX = { if (forward) -shift(it) else shift(it) }
+                                ) + fadeOut(tween(180, easing = OnelineMotionEasing)))
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background),
+                    label = "tabContent"
+                ) { targetTab ->
+                    when (targetTab) {
+                        TAB_TODO -> TodoList(
+                            active,
+                            boardOrder,
+                            hiddenBoards,
+                            homeBuckets,
+                            pendingArchive = pendingArchive,
+                            gestures = rememberGestures(),
+                            topInset = statusBarDp,
+                            onCircleTap = { todo ->
+                                // 点圆圈：先播 650ms 填充动画，动画走完再写库。计时器在 ViewModel 里，
+                                // 行被回收（快速滑动）也不会中断 —— 这是 v0.3 归档失效的根因修复。
+                                vm.requestArchive(todo.id, animate = true)
+                                // A repeating todo rolls forward instead of archiving, and undo cannot
+                                // restore that, so only show the completion bar for real archiving.
+                                val rollsForward =
+                                    todo.repeatDays > 0 && SettingsRepo.autoRepeatEnabled(context)
+                                if (!rollsForward) justCompleted = todo
+                            },
+                            onSwipeArchive = { todo ->
+                                // 右滑：行已经滑出屏幕，立即写库，不再等动画。
+                                vm.requestArchive(todo.id, animate = false)
+                                val rollsForward =
+                                    todo.repeatDays > 0 && SettingsRepo.autoRepeatEnabled(context)
+                                if (!rollsForward) justCompleted = todo
+                            },
+                            onTodoEdit = { todo ->
+                                editTarget = todo
+                                vm.previewExisting(todo)
+                                showAdd = true
+                            },
+                            listState = todoListState,
+                            scrollToTodoId = scrollToTodoId,
+                            highlightId = highlightId,
+                            onScrollHandled = { scrollToTodoId = -1L },
+                            onLocated = { highlightId = it }
+                        )
+                        TAB_ARCHIVED -> ArchivedList(
+                            archived,
+                            onRestore = { vm.unarchive(it) },
+                            onDelete = { vm.delete(it) },
+                            listState = archivedListState,
+                            topInset = statusBarDp,
+                            scrollToTodoId = scrollToTodoId,
+                            highlightId = highlightId,
+                            onScrollHandled = { scrollToTodoId = -1L },
+                            onLocated = { highlightId = it }
+                        )
+                        TAB_SETTINGS -> SettingsScreen(
+                            themeMode = themeMode,
+                            onSetThemeMode = onSetThemeMode,
+                            immersive = immersive,
+                            onSetImmersive = { immersive = it },
+                            paletteId = paletteId,
+                            onSetPalette = onSetPalette,
+                            darkCardStyleId = darkCardStyleId,
+                            onSetDarkCardStyle = onSetDarkCardStyle,
+                            remindersEnabled = remindersEnabled,
+                            onSetRemindersEnabled = { on ->
+                                onSetRemindersEnabled(on)
+                                onRescheduleReminders()
+                            },
+                            remindAtDue = remindAtDue,
+                            onSetRemindAtDue = { on ->
+                                onSetRemindAtDue(on)
+                                onRescheduleReminders()
+                            },
+                            remindInAdvance = remindInAdvance,
+                            onSetRemindInAdvance = { on ->
+                                onSetRemindInAdvance(on)
+                                onRescheduleReminders()
+                            },
+                            overdueNag = overdueNag,
+                            onSetOverdueNag = { on ->
+                                onSetOverdueNag(on)
+                                onRescheduleReminders()
+                            },
+                            overdueInterval = overdueInterval,
+                            onSetOverdueInterval = { hours ->
+                                onSetOverdueInterval(hours)
+                                onRescheduleReminders()
+                            },
+                            boardOrder = boardOrder,
+                            onSetBoardOrder = onSetBoardOrder,
+                            hiddenBoards = hiddenBoards,
+                            onSetHiddenBoards = onSetHiddenBoards,
+                            homeBuckets = homeBuckets,
+                            onSetHomeBuckets = onSetHomeBuckets,
+                            defaultMinuteOfDay = defaultMinuteOfDay,
+                            onSetDefaultMinuteOfDay = onSetDefaultMinuteOfDay,
+                            autoRepeat = autoRepeat,
+                            onSetAutoRepeat = onSetAutoRepeat,
+                            onRescheduleReminders = onRescheduleReminders,
+                            onExactAlarmSettings = onExactAlarmSettings,
+                            onTestNotification = {
+                                if (NotificationHelper.canPostNotifications(context)) {
+                                    NotificationHelper.postTest(
+                                        context,
+                                        "通知测试",
+                                        SettingsRepo.notificationStyle(context).dueWord,
+                                        quote = Quotes.random(context)
+                                    )
+                                } else {
+                                    Toast.makeText(context, "请先允许通知权限", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            onTestTodo = { vm.addTestInOneMinute() },
+                            listState = settingsListState,
+                            topInset = statusBarDp
+                        )
+                        TAB_ABOUT -> AboutScreen(
+                            // 浮层顶栏在关于页不显示：hero 就是页头，只需让出状态栏。
+                            topPadding = statusBarDp,
+                            listState = aboutListState
+                        )
+                    }
                 }
 
                 // Completion bar：浮在内容上方，只在 Todo 页显示
@@ -697,16 +739,31 @@ private fun TodoAppContent(
                     ) {
                         TopAppBar(
                             title = {
-                                Crossfade(
+                                // ★ 2026-11-08（§62）：Crossfade(180) → AnimatedContent 交叉淡变，
+                                //   与 tab 内容共用同一条缓动；超长标题用官方 basicMarquee 滚动
+                                //   （内容不超过容器宽度时它自己不滚）。
+                                AnimatedContent(
                                     targetState = title,
-                                    animationSpec = tween(180),
+                                    transitionSpec = {
+                                        if (reduceMotion) {
+                                            EnterTransition.None togetherWith ExitTransition.None
+                                        } else {
+                                            fadeIn(tween(220, easing = OnelineMotionEasing)) togetherWith
+                                                fadeOut(tween(160, easing = OnelineMotionEasing))
+                                        }
+                                    },
                                     label = "topBarTitle"
                                 ) { t ->
                                     Text(
                                         t,
                                         fontWeight = FontWeight.Bold,
                                         maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.basicMarquee(
+                                            iterations = Int.MAX_VALUE,
+                                            velocity = 48.dp,
+                                            repeatDelayMillis = 1500
+                                        )
                                         // ★ 不给标题单独加淡出。
                                         //   v0.5.1/0.5.2 试过"标题先淡、整条后走"，结果出现一个
                                         //   明确的坏状态：文字已经没了、下面还有一条空底色 ——

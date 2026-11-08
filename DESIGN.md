@@ -3554,6 +3554,9 @@ zuige 第三次拍板：不要额外符号，句中写「标签作业」，「�
 
 ## §61 撤掉关于页整页推入（合规分支适配，2026-11-07）
 
+> ⚠ **勘误（2026-11-08）**：本节「四页统一硬切」口径**已被 §62 推翻**。
+> 撤掉关于页那处不对称的单独推入仍然成立，替代方案改为四页统一转场。
+
 > 与 main `DESIGN.md §61` 同题；现象、根因与四级实现顺序结论以 main 那节为准，
 > 这里只记本分支的搬运结果与边界核对。
 
@@ -3583,4 +3586,44 @@ zuige 第三次拍板：不要额外符号，句中写「标签作业」，「�
 - 按 §60.4 起的脚本口径：`:app:compileDebugKotlin` / `:app:testDebugUnitTest` /
   `:app:assembleRelease` 在本分支通过，**不连设备、不装机、不 tap / dump**。
 - 按 AGENTS §5：**版本号不动、不发版**，vivo 商店后台与 `latest.json` / 博客文章都不碰。
+
+---
+
+## §62 四个 tab 统一转场 + 顶栏文字动效（合规分支适配，2026-11-08）
+
+> 与 main `DESIGN.md §62` 同题；ImageToolbox 源码结论、动效规格、四级实现顺序与
+> 三个防坑以 main 那节为准，这里只记本分支的搬运结果与边界核对。
+
+### 62.1 搬运
+
+- zuige 看过 `T8RIN/ImageToolbox` 源码后选「连 tab 切换一起做」，
+  **推翻 §61「四页统一硬切」**。
+- ★ **没有用 `cherry-pick` 整文件覆盖**：本分支基线落后（停在 `1.0.1 / 35`，缺
+  `backup/` / `update/` / `ALL_MIGRATIONS`，`FocusScreen` 里也没有减少动画判定），
+  只按同一套 diff 手工改 `TodoListScreen.kt`：`when(tab)` →
+  `AnimatedContent(targetState = tab) { targetTab -> ... }`、`Crossfade` →
+  `AnimatedContent` + `basicMarquee`、补 imports 与 `@file:OptIn`。
+  四处改动与 main 逐字一致，其余部分一律不带。
+- 新增 `ui/theme/Motion.kt`（`systemReduceMotion` + `OnelineMotionEasing`），注释写明
+  「本分支 `FocusScreen` 无减少动画判定、不动它」—— 按 AGENTS §4
+  「本分支缺什么就别带什么」，**没有**改 `FocusScreen.kt`。
+- `README.md`「外观」补一段动效说明；`DESIGN.md` §61 加勘误 + 本节。
+- 不引任何第三方依赖；版本号不动、不发版。
+
+### 62.2 边界核对（AGENTS §4）
+
+- **Manifest 零改动**：无 `INTERNET`；`ACCESS_NETWORK_STATE` 仍是 `tools:node="remove"`；
+  无 `REQUEST_INSTALL_PACKAGES` / `FOREGROUND_SERVICE_DATA_SYNC` / FileProvider。
+- 无 `update/` 模块、无 `UpdateDialog.kt`；`AboutScreen.kt` 里
+  「没有应用内检查更新（v1.0.0 起）」仍在，未被 main 的关于页整文件覆盖。
+- 纯 UI 动效，无新权限 / 无数据类别变化 → `PRIVACY_POLICY_VERSION` 不动、
+  `docs/PRIVACY.md` 不用改；`PrivacyScreen` + 首启同意 + 关于页政策入口保持原样。
+- 本分支 3 个上架材料（`PrivacyScreen.kt` / `SettingsRepo.kt` / `docs/PRIVACY.md`）
+  保持未提交、原样保留。
+
+### 62.3 验证与收尾
+
+- `:app:compileDebugKotlin` / `:app:testDebugUnitTest` / `:app:assembleRelease` 全 `EXIT=0`。
+- 按 AGENTS §6.4 **不连设备、不装机、不 tap / dump**；按 §5 不发版，
+  vivo 商店后台与 `latest.json` / 博客文章都不碰。
 
