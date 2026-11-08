@@ -5036,5 +5036,9 @@ Compose 默认 fade + scale**。两者叠加才是用户要的「文字动效」
   **不连设备、不装机、不 tap / 不 dump**。）
 - 按 AGENTS §5：版本号不动、不发版、不碰 Release / Hexo / 博客文章；`dist/` 不进提交。
 - 落地：main `70b8673` + 本条落地结果 docs 提交；合规分支 `fe9f528` + 本条 docs 提交。
-  ⚠ 本轮**没有 adb 安装**（§6.4 需单独授权），新包停在 `app/build/outputs/apk/release/`。
+- ⚠ **安装待续**：zuige 随后单独授权覆盖安装（只装不测），但设备在锁屏
+  （`mDreamingLockscreen=true`）：`adb install -r` 与 `push + pm install` 均返回
+  `INSTALL_FAILED_ABORTED: User rejected permissions`；`keyevent 224 / 82` 唤醒后仍是锁屏，
+  未强行绕过安全锁、未再做安装尝试。新包停在 `app/build/outputs/apk/release/`
+  （2,109,692 字节），需手动解锁屏幕后重试。全程无 tap / 输入文字 / dump / 截图。
 - 工作区复核：main 的 `output/` / `show/` / `dist/` 与合规分支 3 个上架材料均未进提交。
