@@ -3703,9 +3703,14 @@ zuige 第三次拍板：不要额外符号，句中写「标签作业」，「�
   `update/` / `UpdateDialog.kt`；关于页「没有应用内检查更新（v1.0.0 起）」仍在；
   无新权限 / 无数据类别变化 → `PRIVACY_POLICY_VERSION` 不动、`docs/PRIVACY.md` 不改。
   3 个上架材料仍未提交、原样保留。
-- 验证：`:app:testDebugUnitTest` / `:app:assembleRelease` 全 `EXIT=0`；按 §6.4 不连设备、
+- 验证：`:app:testDebugUnitTest` / `:app:assembleRelease` 全 `EXIT=0`；按 §6.4 不装机、
   不 tap / dump / 截图；按 §5 版本号不动、不发版，vivo 商店后台与博客源都不碰。
 - 落地：本分支 `62f9f77`，对应 main `c60d817`；产物 2,076,404 字节（10:50）。
-  本轮只装 main 包（设备是 main 签名），但设备未在线、安装未完成；
-  按 §6.4 未发按键、未 tap / dump / 截图。
+  本轮只覆盖安装 main 包（设备是 main 签名），14:17 `install -r` 成功，
+  `dumpsys package` 复核 `1.0.14 / 48` / `lastUpdateTime=2026-11-08 14:17:28`；
+  按 §6.4 只装不测，未发按键、未 tap / dump UI / 截图。
+- ★ 踩坑：先前 `devices -l` 为空不是 USB 断开（Windows PnP 一直有 vivo ADB 接口），
+  而是 adb daemon 跨 shell 调用被回收、冷启动后首次 `devices` 早于 USB 枚举完成。
+  **把 `start-server` + `devices` + `install` 放在同一次调用里并允许重试**即恢复；
+  详见 main `DESIGN.md §65.5`。
 

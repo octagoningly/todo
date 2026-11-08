@@ -889,3 +889,25 @@ zuige 拍板：**方案B（结束点真落库）**、逾期判定用结束点（
 - 时间区间：裸小时/时段词继承/7 种连接词/冒号+半点/内嵌/带日期/跨午夜/守卫。
 - 新档位词：周末（含"今天就是周六"）、周末变体、年底/年末/年初、year 关键字 + 边界、年终。
 - 相对提醒：各档位词、日期+标题、跨午夜、保留显式日期、复合词守卫、最长优先。
+
+## 2026-11-08：adb daemon 冷启动首次 `devices` 为空（不是 USB 断开）
+
+### 现象
+- §65 收尾 `adb -s 10AE721UXN000QG install -r` 报 `device '10AE721UXN000QG' not found`；
+  `devices -l` 只有表头，`kill-server / start-server / adb usb / adb reconnect` 之后仍是空表。
+- 但 Windows `Get-PnpDevice -PresentOnly` 一直看得到 `vivo X100s Pro`（WPD）与
+  `Android Composite ADB Interface`（`USB\VID_2D95&PID_6013&MI_02`，Status OK）。
+
+### 根因
+- adb daemon 在两次 shell 调用之间被回收，每次 Bash 调用都打印
+  `* daemon not running; starting now at tcp:5037`；**冷启动的 daemon 还没扫完 USB，
+  紧接着那一次 `devices` 就返回空表** —— 是枚举时机问题，不是物理断线，也不是调试授权掉了。
+
+### 修法（装机脚本模板）
+- 把 `start-server` → `devices -l` → `install -r` 放在**同一个 python/subprocess 调用**里，
+  `devices` 允许隔 1~2s 重试 2~4 次；命中 `^\s*<serial>\s+device\b` 才装。
+- 本次重试第 1 次即列出 `10AE721UXN000QG device ... transport_id:1`，
+  `install -r` → `Success`；只读 `dumpsys package` 复核 `1.0.14 / 48` /
+  `lastUpdateTime=2026-11-08 14:17:28`（装的是 main 签名包）。
+- ★ 别据此让用户「重新插 USB / 重新授权」；也别发按键试探（§6.4 装机允许、操控禁止）。
+  `adb kill-server` / `adb usb` / `adb reconnect` 对这个现象都无效。
