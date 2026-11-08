@@ -3626,4 +3626,6 @@ zuige 第三次拍板：不要额外符号，句中写「标签作业」，「�
 - `:app:compileDebugKotlin` / `:app:testDebugUnitTest` / `:app:assembleRelease` 全 `EXIT=0`。
 - 按 AGENTS §6.4 **不连设备、不装机、不 tap / dump**；按 §5 不发版，
   vivo 商店后台与 `latest.json` / 博客文章都不碰。
+- 落地：本分支 `612a38d`，对应 main `798996e`。产物 `app-release.apk`
+  2,060,020 字节（09:19），版本号不动、未发版、未装机；3 个上架材料仍未提交。
 
