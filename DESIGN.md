@@ -3658,6 +3658,9 @@ zuige 第三次拍板：不要额外符号，句中写「标签作业」，「�
 
 ## §64 按 ImageToolbox 原参数还原「文字进出场」（合规分支适配，2026-11-08）
 
+> ⚠ **勘误（2026-11-08，§65）**：本节的整屏 600ms 滑动口径已被 §65 撤销 ——
+> 那是页面栈导航动画，不是 ImageToolbox 的文字动效；改为**容器硬切 + 文字自己进场**。
+
 > 与 main `DESIGN.md §64` 同题；源码查证、参数表、四级结论与架构差异以 main 那节为准，
 > 这里只记本分支适配与边界核对。
 
@@ -3683,4 +3686,24 @@ zuige 第三次拍板：不要额外符号，句中写「标签作业」，「�
   首次尝试因锁屏 `INSTALL_FAILED_ABORTED` 失败，未发按键绕过安全锁。
 - ★ 规矩按 zuige 原话同步到两边 `AGENTS.md §6.4 / §7`：**adb 装机允许、操控禁止**。
   3 个上架材料（`PrivacyScreen.kt` / `SettingsRepo.kt` / `docs/PRIVACY.md`）仍未提交、原样保留。
+
+---
+
+## §65 文字自己进出场（合规分支适配，2026-11-08）
+
+> 与 main `DESIGN.md §65` 同题；全仓源码证据、四级结论、参数与实现细节以 main 那节为准。
+
+- zuige 第四次纠正「是单独的文字有动效，而不是一整个卡片」；§64 的整屏 600ms 滑动撤销，
+  四页容器改硬切，动画下沉到 `Text`。
+- 本分支按同一套 diff 手工落：`TodoListScreen.kt` 的 tab `transitionSpec` 改硬切、
+  content lambda 内加 `CompositionLocalProvider`、`for ((index, row) in rows.withIndex())`
+  按行错落、顶栏注释订正；新增 `ui/theme/TextEnter.kt`；`TodoListScreen.kt` /
+  `AboutScreen.kt` 的 `Text` import 换成项目内包装；设置项说明与 `README.md` 外观段同步。
+- ★ 边界核对（AGENTS §4）：只改 UI 动效与文案，Manifest 零改动，无 `INTERNET` /
+  `update/` / `UpdateDialog.kt`；关于页「没有应用内检查更新（v1.0.0 起）」仍在；
+  无新权限 / 无数据类别变化 → `PRIVACY_POLICY_VERSION` 不动、`docs/PRIVACY.md` 不改。
+  3 个上架材料仍未提交、原样保留。
+- 验证：`:app:testDebugUnitTest` / `:app:assembleRelease` 全 `EXIT=0`；按 §6.4 不连设备、
+  不 tap / dump / 截图；按 §5 版本号不动、不发版，vivo 商店后台与博客源都不碰。
+- 落地：本分支一次提交，见 `git log`。
 
