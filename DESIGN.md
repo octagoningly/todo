@@ -5127,8 +5127,16 @@ zuige：「不是啊，我记得那个开源 app 是单独的文字有动效，�
   （10:48）/ 合规 **2,076,404 字节**（10:50）。动效是组合期行为，按 §7 不做真机 UI 验收。
 - 按 §5 版本号不动、不发版；Manifest 零改动，合规分支边界未越。
 - 落地：main `c60d817`、合规分支 `62f9f77`（功能 + 文档各一次提交）。
-- ⚠ **本轮 adb 安装未完成**：按 §6.4「装机允许、操控禁止」只尝试了
-  `adb install -r`，但设备 `10AE721UXN000QG` 未被枚举（`device not found`；
-  `kill-server / start-server / adb usb` 后 `devices -l` 仍为空）。
-  未发任何按键、未 tap / dump / 截图；新包停在 `app/build/outputs/apk/release/`，
-  需重新连接 USB 并解锁授权后再装。
+- ✅ **adb 覆盖安装已完成（14:17）**：`install -r` 返回 `Performing Streamed Install / Success`；
+  只读 `dumpsys package` 复核 `versionName=1.0.14` / `versionCode=48` /
+  `lastUpdateTime=2026-11-08 14:17:28`，确认装的是本轮 main release 包。
+  按 §6.4 只装不测：未发任何按键、未 tap / dump UI / 截图。
+- ★ 踩坑：一开始 `install -r` 报 `device not found`、`devices -l` 为空，
+  **不是 USB 断了** —— Windows PnP 一直能看到 `vivo X100s Pro` 与
+  `Android Composite ADB Interface`（`VID_2D95&PID_6013`）。真因是 adb daemon
+  在两次 shell 调用之间被回收，下一次调用冷启动的 daemon **还没完成 USB 枚举**
+  就先跑了 `devices`；在**同一次调用内** `start-server` 后再 `devices -l`（必要时
+  隔 1~2s 重试）立刻列出 `10AE721UXN000QG device transport_id:1`。
+  → `adb kill-server` / `adb usb` / `adb reconnect` 对这个现象都无效，
+  **别据此判断「USB 断开、需要用户重新插线」**；装机脚本要把「启动 daemon +
+  枚举 + 安装」放在一个进程里，并允许 1~2 次重试。
