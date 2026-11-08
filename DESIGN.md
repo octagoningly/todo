@@ -5030,8 +5030,11 @@ Compose 默认 fade + scale**。两者叠加才是用户要的「文字动效」
 
 ### 64.6 验证与收尾
 
-- 两边 `:app:testDebugUnitTest` / `:app:assembleRelease` 全 `EXIT=0`，全量单测 0 失败 / 0 错误
-  （脚本验收，AGENTS §6.4：**不连设备、不装机、不 tap / 不 dump**）。
+- 两边 `:app:testDebugUnitTest` / `:app:assembleRelease` 全 `EXIT=0`：main **388** 条 /
+  合规分支 **369** 条单测 0 失败 0 错误；产物 main **2,109,692 字节**（10:01）/
+  合规 **2,060,020 字节**（09:36）。（脚本验收，AGENTS §6.4：
+  **不连设备、不装机、不 tap / 不 dump**。）
 - 按 AGENTS §5：版本号不动、不发版、不碰 Release / Hexo / 博客文章；`dist/` 不进提交。
-- 落地：main 与合规分支各一次提交，见 `git log`。
+- 落地：main `70b8673` + 本条落地结果 docs 提交；合规分支 `fe9f528` + 本条 docs 提交。
+  ⚠ 本轮**没有 adb 安装**（§6.4 需单独授权），新包停在 `app/build/outputs/apk/release/`。
 - 工作区复核：main 的 `output/` / `show/` / `dist/` 与合规分支 3 个上架材料均未进提交。
