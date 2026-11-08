@@ -4792,6 +4792,11 @@ zuige 选「**去掉推入，四页统一硬切**」。
 
 ## §62 四个 tab 统一转场 + 顶栏文字动效（2026-11-08，推翻 §61 硬切口径）
 
+> ⚠ **勘误（2026-11-08，§64）**：本节的**动效规格**（tab 1/12 屏宽 320ms、顶栏 300ms
+> 交叉淡变）**已被 §64 修订** —— 按 ImageToolbox 原参数改回整屏 600ms 水平滑动，
+> 顶栏标题改回 Compose 默认 `fadeIn + scaleIn(0.92f)`。
+> 本节「四页统一转场 / `targetTab` / 顶栏浮层不进转场 / 减少动画硬切」的结构结论仍成立。
+
 ### 62.1 背景：从「找开源文字动效」到「抄 ImageToolbox 的缓动」
 
 zuige 先问「有没有那种开源的文字进出场动效，切换页面文字有动效」，随后点名
@@ -4955,4 +4960,78 @@ zuige：「设置里面做一个开关，然后 adb 安装」。给 §62 刚落�
 - ✅ **adb 覆盖安装成功**：`10AE721UXN000QG`（vivo V2324HA）
   `Performing Streamed Install` → `Success`，装的是 main 09:33 的 release 包。
   **只装不测**：没有 tap / 输入 / dump / 截图；合规分支包未装。
+- 工作区复核：main 的 `output/` / `show/` / `dist/` 与合规分支 3 个上架材料均未进提交。
+
+---
+
+## §64 按 ImageToolbox 原参数还原「文字进出场」（2026-11-08）
+
+### 64.1 用户反馈：§62 把主体动效削掉了
+
+zuige 装上 §63 的包后反馈：「现在好像只有切换的时候页面有一点动效，但是我说的文字动效还是没有啊。不是让你参考那个开源项目了吗」。
+给出四种文字动效候选（A 逐行错落 / B 标题滑入滑出 / C 整页缩放淡入 / D 逐字显现）后，
+他不选自定义组合，明确要求：「使用那个开源项目的做法，我看着跟 b 有点像，你去确认一下」。
+
+★ 结论：**理解偏窄的是我，不是需求**。§62 只抄了 ImageToolbox 的缓动曲线，却把它的
+主体动效削成 1/12 屏宽 320ms —— 页面里的文字几乎原地不动，自然「文字动效还是没有」。
+
+### 64.2 二次查证（逐行确认源码）
+
+| 文件 | 实际内容 |
+|---|---|
+| `Animations.kt` → `fancySlideTransition` | `slideInHorizontally(tween(600, FancyTransitionEasing), initialOffsetX = { screenWidthPx }) + fadeIn(tween(300, 100)) togetherWith slideOutHorizontally(..., targetOffsetX = { -screenWidthPx }) + fadeOut(tween(300, 100))`；后退方向反转。**位移是整屏宽度、时长 600ms** |
+| `TopAppBarTitle.kt` | 外层 `AnimatedContent(transitionSpec = { fadeIn() togetherWith fadeOut() })`；内层嵌套标题 `AnimatedContent(targetState = title) { Text(it) }` **没写 spec** → 走 Compose 默认 |
+| AndroidX `AnimatedContent.kt` 默认 spec | `(fadeIn(tween(220, 90)) + scaleIn(initialScale = 0.92f, animationSpec = tween(220, 90))) togetherWith fadeOut(tween(90))` |
+
+即 **顶栏文字本身没有 slide**；看着像「标题滑入滑出」（候选 B），是因为页面里的文字
+跟着 `fancySlideTransition` 整屏水平滑进滑出。§62 把这段位移削掉，正是反馈的根因。
+
+> 查证踩坑：仓库默认分支是 `master` 而不是 `main`，按 `main` 拉 raw 全部 404；
+> 换 `/master/...` 才读到源码。
+
+### 64.3 四级实现顺序（AGENTS §2）
+
+1. **复用旧模块**：§62 的 `AnimatedContent(targetState = tab)`、`ui/theme/Motion.kt` 的
+   `OnelineMotionEasing` / `systemReduceMotion`，以及 §63 的 `reduceMotion` 与设置开关 ——
+   全部沿用，不新建文件、不加依赖。
+2. **Google 官方**：`slideInHorizontally` / `slideOutHorizontally` / `fadeIn` / `fadeOut` /
+   `scaleIn` / `tween` 全是官方 API；顶栏标题直接采用 `AnimatedContent` 的**官方默认 spec**
+   （显式写出只为保留减少动画硬切分支）。
+3. **开源参考**：`T8RIN/ImageToolbox`（Apache-2.0）`Animations.kt` 的
+   `fancySlideTransition` 原参数 —— **只抄参数、不引依赖**（AGENTS §2 第 3 级，同 §49.1 先例）。
+4. **手写**：无新判定逻辑；纯函数 / 数据层零改动 → 不新增 JVM 单测，按 §7 走脚本编译 + release 验收。
+
+### 64.4 改动清单（两条分支逐字一致）
+
+- tab 内容 `AnimatedContent.transitionSpec`：
+  - 前进：新页 `slideInHorizontally(tween(600, OnelineMotionEasing), { it }) + fadeIn(tween(300, 100))`，
+    旧页 `slideOutHorizontally(..., { -it }) + fadeOut(tween(300, 100))`；
+  - 后退：方向取反（`{ -it }` / `{ it }`）；`targetState > initialState` 判断前进 / 后退。
+  - ★ `it` 就是整屏宽度，**不再除 12**；`AnimatedContent` 根上仍挂
+    `.background(MaterialTheme.colorScheme.background)`，整屏滑动过程中不会露底。
+- 顶栏标题 `AnimatedContent.transitionSpec`：
+  `(fadeIn(tween(220, 90)) + scaleIn(initialScale = 0.92f, animationSpec = tween(220, 90))) togetherWith fadeOut(tween(90))`。
+  ★ `scaleIn` 第一个位置参数是 `animationSpec`，必须写命名参数 `initialScale =`，写位置参数会编译错。
+- 两处 `reduceMotion` 分支保持 `EnterTransition.None togetherWith ExitTransition.None`；
+  §63 开关与系统「减少动态效果」优先级不变，关掉仍是四页 + 标题一起硬切。
+- main 新增 import `androidx.compose.animation.scaleIn`；合规分支原本已有
+  `scaleIn` / `scaleOut`（旧 FAB 动画），无需新增。
+- 订正两处 §62 残留注释（「1/12 屏宽」「与 tab 内容共用同一条缓动」）；§63 设置项说明
+  由「淡入淡出与轻微滑动」改成「整页水平滑入滑出、文字一起进出场」。
+- `README.md` 外观段同步；不改 `Motion.kt` / `AboutScreen.kt` / Manifest / 版本号 / 任何上架材料。
+
+### 64.5 架构差异：顶栏为什么不跟着整屏滑
+
+ImageToolbox 每个页面自带 topBar，标题随整页一起滑；本项目顶栏是**跨四个 tab 共享的浮层**
+（见 `TodoListScreen.kt` 沉浸式顶栏注释），放进 `AnimatedContent` 会让顶栏跟着消失再出现，
+且列表 `contentPadding.top` 整套失效 —— §62 已定「顶栏 / FAB / 完成条不进转场」。
+所以：**页面里所有文字靠 600ms 整屏滑动进出场，顶栏标题单独走 ImageToolbox 嵌套标题那套
+Compose 默认 fade + scale**。两者叠加才是用户要的「文字动效」。
+
+### 64.6 验证与收尾
+
+- 两边 `:app:testDebugUnitTest` / `:app:assembleRelease` 全 `EXIT=0`，全量单测 0 失败 / 0 错误
+  （脚本验收，AGENTS §6.4：**不连设备、不装机、不 tap / 不 dump**）。
+- 按 AGENTS §5：版本号不动、不发版、不碰 Release / Hexo / 博客文章；`dist/` 不进提交。
+- 落地：main 与合规分支各一次提交，见 `git log`。
 - 工作区复核：main 的 `output/` / `show/` / `dist/` 与合规分支 3 个上架材料均未进提交。
