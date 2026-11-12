@@ -45,6 +45,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -55,6 +56,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -135,6 +137,7 @@ import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
@@ -171,6 +174,7 @@ import com.lirui.oneline.ui.theme.fieldSurface
 import com.lirui.oneline.ui.theme.placeholderText
 import com.lirui.oneline.ui.theme.secondaryActionContent
 import com.lirui.oneline.util.AppTime
+import com.lirui.oneline.util.FabPosition
 import com.lirui.oneline.util.Format
 import com.lirui.oneline.util.HomeBoard
 import com.lirui.oneline.util.HomeBucket
@@ -530,54 +534,44 @@ private fun TodoAppContent(
                     NavTab("设置", tab == TAB_SETTINGS) { tab = TAB_SETTINGS }
                     NavTab("关于", tab == TAB_ABOUT) { tab = TAB_ABOUT }
                 }
-            },
-            floatingActionButton = {
-                // ★ 方形阴影（v1.0.10）：上一版只去掉 scaleIn/scaleOut 没用 —— fadeIn/fadeOut
-                //   **同样**通过 graphicsLayer 建 layer，而 M3 FAB 自带 shadowElevation，
-                //   这个 layer 的 outline 默认是矩形，动画那一两帧阴影就按矩形画出来，
-                //   动画结束 layer 合并才恢复。所以根因是「带 elevation 的 FAB 套在
-                //   AnimatedVisibility 里」，与缩放无关。
-                //   确定性修法 = 消除阴影源：显式把 elevation 四档全归零，
-                //   layer outline 是方是圆都无所谓；淡入淡出保留（不"啪"地消失）。
-                AnimatedVisibility(
-                    visible = tab == TAB_TODO,
-                    enter = fadeIn(tween(180)),
-                    exit = fadeOut(tween(150))
-                ) {
-                    // 2026-11-05 按 zuige 要求「改回去」：还原经典 M3 的 56dp FAB（0.9.3 观感）。
-                    // M3E 的 80dp Medium FAB 只试了一版，视觉上过重；形状阶 / 字阶的其余改动保留。
-                    // 图标回默认 24dp，列表底部留白同步从 96dp 收回 8dp（见下方 contentPadding）。
-                    // ★ v1.0.12：默认 containerColor = primaryContainer，和列表卡片的
-                    //   cardBackground **是同一个色** —— FAB 压在卡片上完全融进背景，
-                    //   只剩一个加号浮着。改用 primary（深一档）+ onPrimary，
-                    //   在任何底色上都能一眼看出这是个按钮。只改颜色，不动 56dp 尺寸。
-                    FloatingActionButton(
-                        onClick = { showAdd = true },
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary,
-                        elevation = FloatingActionButtonDefaults.elevation(
-                            defaultElevation = 0.dp,
-                            pressedElevation = 0.dp,
-                            focusedElevation = 0.dp,
-                            hoveredElevation = 0.dp
-                        )
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = "添加")
-                    }
-                }
             }
+            // ★ §68：FAB 从 Scaffold 的 floatingActionButton 槽移到 content 里 ——
+            //   槽的位置由 Scaffold 内部算，拿不到内容区尺寸就没法给拖动做精确边界。
+            //   改由 BoxWithConstraints 自己 align(BottomEnd)，视觉位置与 M3 默认一致
+            //   （右 / 下各 16dp）；56dp 尺寸、elevation 四档归零、fade 进出场全部不变。
         ) { padding ->
             // ★ 顶栏不再是 Scaffold 的 topBar。
             //
             // 用 topBar 的时候，列表的视口被压到顶栏下方 —— 顶栏一收起，上面就留下一条
             // 64dp 的空带（内容滚不进去）。现在顶栏是**浮层**，列表视口从状态栏下沿开始，
             // 靠 contentPadding.top 把首项让到标题栏下面，收起时内容正好补上那块位置。
-            Box(
+            BoxWithConstraints(
                 Modifier
                     .fillMaxSize()
                     // 只吃底栏高度：状态栏由每个列表的 contentPadding.top 负责（见 statusBarDp）。
                     .padding(bottom = padding.calculateBottomPadding())
             ) {
+                // ── §68：FAB 长按拖动 ──
+                // maxWidth / maxHeight 是**已扣掉底栏**的内容区尺寸，边界不用去猜
+                // NavigationBar 高度或系统 insets。FAB 恒 56dp，四周安全边距 16dp。
+                val fabSizePx = with(density) { 56.dp.toPx() }
+                val fabMarginPx = with(density) { 16.dp.toPx() }
+                val fabTopSafePx = with(density) { (statusBarDp + TOP_BAR_BODY_HEIGHT).toPx() }
+                val minFabDx = FabPosition.minOffset(
+                    with(density) { maxWidth.toPx() }, fabSizePx, fabMarginPx
+                )
+                val minFabDy = FabPosition.minOffset(
+                    with(density) { maxHeight.toPx() }, fabSizePx, fabMarginPx, fabTopSafePx
+                )
+                var fabDx by remember { mutableFloatStateOf(0f) }
+                var fabDy by remember { mutableFloatStateOf(0f) }
+                var fabDragging by remember { mutableStateOf(false) }
+                // 冷启动 / 旋屏 / 分屏：把存的比例换算回当前屏幕的 px，并重新夹一遍边界。
+                LaunchedEffect(minFabDx, minFabDy) {
+                    fabDx = FabPosition.toOffsetPx(SettingsRepo.fabOffsetX(context), minFabDx)
+                    fabDy = FabPosition.toOffsetPx(SettingsRepo.fabOffsetY(context), minFabDy)
+                }
+
                 // ★ 2026-11-08（§67）：四个 tab 的**容器硬切**，只有文字进出场。
                 //   §66 把 CompositionLocalProvider 挂在 content lambda 里、且换页与
                 //   visible = true 同帧，真机抓帧证实页面文字动效根本没播（见 DESIGN §67）。
@@ -761,6 +755,77 @@ private fun TodoAppContent(
                                     )
                             )
                         }
+                    }
+                }
+
+                // ── §68：主页 FAB（长按可拖动，像悬浮球那样挪开，别挡最下面待办的时间）──
+                // ★ 位置走 Modifier.offset{ } 的 lambda 版：在 layout 阶段读 State
+                //   （deferred read），拖动全程零重组；点击热区也跟着一起走，
+                //   不会「看着在这、点不到」。graphicsLayer 只改绘制，不保证热区。
+                AnimatedVisibility(
+                    visible = tab == TAB_TODO,
+                    enter = fadeIn(tween(180)),
+                    exit = fadeOut(tween(150)),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .offset { IntOffset(fabDx.roundToInt(), fabDy.roundToInt()) }
+                        .padding(16.dp)
+                ) {
+                    // ★ 方形阴影（v1.0.10）：根因是「带 elevation 的 FAB 套在
+                    //   AnimatedVisibility 里」，与缩放无关 —— 四档全归零，
+                    //   layer outline 是方是圆都无所谓；只保留淡入淡出。
+                    FloatingActionButton(
+                        onClick = { showAdd = true },
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        elevation = FloatingActionButtonDefaults.elevation(
+                            defaultElevation = 0.dp,
+                            pressedElevation = 0.dp,
+                            focusedElevation = 0.dp,
+                            hoveredElevation = 0.dp
+                        ),
+                        modifier = Modifier
+                            .graphicsLayer {
+                                // 长按「拿起来」的反馈：轻微放大。不用 elevation（红线），
+                                // 所以不会再露出方形阴影。也是 deferred read，零重组。
+                                val s = if (fabDragging) 1.08f else 1f
+                                scaleX = s
+                                scaleY = s
+                            }
+                            .pointerInput(minFabDx, minFabDy) {
+                                // ★ 复用 ReorderableBoardList 的范式：官方
+                                //   detectDragGesturesAfterLongPress —— 短按不消费、照常
+                                //   打开添加面板；长按后才接管并消费后续 move。
+                                //   key 带边界值：pointerInput 只在 key 变化时重建，
+                                //   不带上会在旋屏后继续用旧的 minFabDx（见板块排序的坑）。
+                                var moved = false
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = {
+                                        fabDragging = true
+                                        moved = false
+                                    },
+                                    onDrag = { change, amount ->
+                                        change.consume()
+                                        moved = true
+                                        fabDx = FabPosition.clamp(fabDx, amount.x, minFabDx)
+                                        fabDy = FabPosition.clamp(fabDy, amount.y, minFabDy)
+                                    },
+                                    onDragEnd = {
+                                        fabDragging = false
+                                        // 只在真的动过才写盘：一次长按不该留一条写操作。
+                                        if (moved) {
+                                            SettingsRepo.setFabOffset(
+                                                context,
+                                                FabPosition.toFraction(fabDx, minFabDx),
+                                                FabPosition.toFraction(fabDy, minFabDy)
+                                            )
+                                        }
+                                    },
+                                    onDragCancel = { fabDragging = false }
+                                )
+                            }
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "添加")
                     }
                 }
             }

@@ -230,13 +230,13 @@ fun FocusScreen(onClose: () -> Unit) {
         )
     }
 
-    // 超过 2 小时：像忘了关，别一声不吭按原值记进统计。
-    // 三个出口：按当前值 / 自定义（严格小于当前值）/ 不计入；
+    // 计时器开了超过 1 小时（墙钟跨度，含暂停）：给一次修正时长的机会，
+    // 别一声不吭按原值记进统计。三个出口：按当前值 / 自定义 / 不计入；
     // 点弹窗外面或返回键 = 什么都不做、计时继续（不误伤）。
     vm.askLongRunSeconds?.let { seconds ->
         var showCustom by remember { mutableStateOf(false) }
+        val maxMinutes = FocusRules.maxCustomMinutes(seconds)
         if (showCustom) {
-            val maxMinutes = FocusRules.maxCustomMinutes(seconds)
             DurationInputDialog(
                 title = "实际专注了多久？",
                 initial = 25.coerceAtMost(maxMinutes),
@@ -255,7 +255,7 @@ fun FocusScreen(onClose: () -> Unit) {
             AlertDialog(
                 onDismissRequest = vm::cancelLongRun,
                 title = { Text("这次计了 ${FocusRules.formatDuration(seconds)}") },
-                text = { Text("看起来像是忘了结束。要按多长时间记进统计？自定义值必须小于当前值。") },
+                text = { Text("暂停时间不计入。要按多长时间记进统计？可以改成实际专注的时长。") },
                 dismissButton = {
                     TextButton(onClick = { vm.answerLongRun(record = false) }) {
                         Text("不计入")
@@ -263,7 +263,12 @@ fun FocusScreen(onClose: () -> Unit) {
                 },
                 confirmButton = {
                     Row {
-                        TextButton(onClick = { showCustom = true }) { Text("自定义") }
+                        // ★ 净时长恰好 60 秒时 maxCustomMinutes = 0，
+                        //   DurationInputDialog 的合法区间变成 1..0，确定键永远禁用 ——
+                        //   这种情况直接不给「自定义」出口，别把用户送进一个死对话框。
+                        if (maxMinutes >= 1) {
+                            TextButton(onClick = { showCustom = true }) { Text("自定义") }
+                        }
                         TextButton(onClick = { vm.answerLongRun(record = true) }) {
                             Text("按当前值计入")
                         }

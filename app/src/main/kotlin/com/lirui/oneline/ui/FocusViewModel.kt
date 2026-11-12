@@ -63,8 +63,9 @@ class FocusViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     /**
-     * 「这次是不是忘了关」的待确认秒数（> 2 小时）。
+     * 「计时器开了太久」的待确认**净专注秒数**（墙钟跨度 > 1 小时，见 [FocusRules.shouldAskForLongRun]）。
      * null = 没有待确认；>0 = 弹窗让用户选「按当前值 / 自定义 / 不计入」。
+     * ★ 存的是净时长（落库用），不是触发判定用的墙钟跨度。
      */
     var askLongRunSeconds by mutableStateOf<Int?>(null)
         private set
@@ -155,17 +156,23 @@ class FocusViewModel(app: Application) : AndroidViewModel(app) {
      * 用户点了「结束」。
      *
      * 四条路（口径见 [FocusRules]），**从最长到最短判**：
-     *  - > 2 小时 → 弹窗问「按当前值 / 自定义 / 不计入」（像忘了关）；
+     *  - 墙钟跨度 > 1 小时 → 弹窗问「按当前值 / 自定义 / 不计入」；
      *  - ≥ 60 秒 → 直接记入，提示一句；
      *  - 1~59 秒 → 弹窗问「要记下来吗」；
      *  - 0 秒 → 什么都不留。
+     *
+     * ★ §68：第一条看 [FocusRules.wallSpanSeconds]（含暂停）而不是净时长。
+     *   暂停会把 elapsed 冻在暂停那一刻，只按净时长判会让「暂停挂一阵再结束」
+     *   静默落库，跟「不暂停直接结束」行为不一致。落库仍由
+     *   [FocusEngine.finishEarly] 记净时长，这里只决定问不问。
      */
     fun requestFinish() {
         val r = run ?: return
         val t = System.currentTimeMillis()
         val elapsed = FocusRules.elapsedSeconds(r, t)
+        val wallSpan = FocusRules.wallSpanSeconds(r, t)
         when {
-            FocusRules.shouldAskForLongRun(elapsed) -> askLongRunSeconds = elapsed
+            FocusRules.shouldAskForLongRun(elapsed, wallSpan) -> askLongRunSeconds = elapsed
             FocusRules.shouldRecordSilently(elapsed) -> recordAndClose(t, record = true)
             FocusRules.shouldAskBeforeDiscard(elapsed) -> askDiscardSeconds = elapsed
             else -> recordAndClose(t, record = false)

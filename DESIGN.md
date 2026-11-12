@@ -3844,6 +3844,10 @@ RecordRow(行尾删除图标)
 
 ### 52.3 超过 2 小时：先问再记
 
+> ⚠ **勘误（§68，2026-11-12）**：本节的「2 小时门槛」与「按净专注时长判」
+> 两条口径已被 §68 取代 —— 门槛降到 1 小时、判定改看**墙钟跨度**（含暂停）。
+> 此处保留历史原文，不删；现行口径以 §68 为准。
+
 **问题**：正计时没有终点，忘了关就一直涨；一觉醒来「专注 9 小时」直接污染统计。
 
 **判定放纯函数**（项目规矩：判真伪/阈值不留在带 Android 依赖的地方）：
@@ -5242,3 +5246,129 @@ alpha + 18dp 上滑。§65 已加勘误，历史保留。
   → 设备短暂离线时别反复试按键、也别把「PnP 查不到」当成永久结论；
   重新连好后按同一脚本重试即可（14:17 的「daemon 冷启动枚举时机」踩坑仍适用）。
 - 落地：两条分支各一次提交，见 `git log`。
+
+---
+
+## §67 补记：文字进场动效根本没播的病根（2026-11-08 改代码 / 2026-11-12 补文档）
+
+> ⚠ 这一节当时**只改了代码、没写进 DESIGN.md**，代码注释里却到处引用「见 DESIGN §67」，
+> 造成悬空引用。2026-11-12 按原文补记，并单独补提交（`be00a64`），不与 §68 混在一起。
+
+§66 把 `CompositionLocalProvider(LocalTextEnter ...)` 挂在 tab 的
+`AnimatedContent` **content lambda 内**，而且 `displayTab = tab` 与
+`textVisible = true` 在同一帧发生。后果：新页的 `Text` 一挂载拿到的就是完整文字，
+`AnimatedContent` 的初始 state 不是空串，`"" → 整句` 的过渡根本不存在 ——
+真机抓帧证实**页面文字动效压根没播**，只有顶栏标题（另一个独立的
+`AnimatedContent`）还在动。
+
+修法两条，缺一不可：
+
+1. **作用域**：provider 提到 tab `AnimatedContent` **外层**，显隐才能穿透到文字层；
+   content lambda 里仍用 `targetTab`，不用外层实时 `tab`。
+2. **时序拆三段**：`textVisible = false` → `delay(150)` → `displayTab = tab`
+   → `delay(32)` → `textVisible = true`。中间那 32ms 让新页以**空串**挂载一帧，
+   下一段才有 `"" → 整句` 可播；150ms 留给旧页默认 `fadeOut(90)` + spring
+   尺寸收缩走完（§66 只给 90ms，刚起步就被换页打断）。
+
+`displayTab` 只驱动页面内容，顶栏 / 底栏 / FAB 仍读实时 `tab`；`reduceMotion`
+直接硬切，冷启动 `phaseReady` 跳过，快速连点由 `LaunchedEffect` 自动取消。
+`remember` 缓存 spec 的 key 从 `targetTab` 改成 `displayTab`，避免
+`staticCompositionLocalOf` 按对象引用判变化导致整棵文字树跟着重组。
+
+---
+
+## §68 专注结束判定对齐 + 主页 FAB 长按拖动（2026-11-12）
+
+### 68.1 问题：暂停时点「结束」拿不到自定义时长
+
+zuige 报：「专注计时，暂停，超过一个小时，点结束，却没有自定义输入专注时间」，
+并明确期望「跟不是暂停的时候一样」。
+
+查下来的事实链（**不是崩溃，是判定口径的不对称**）：
+
+| 环节 | 现状 |
+| --- | --- |
+| 自定义输入入口 | 全 App 只有 `FocusScreen` 的 `askLongRunSeconds` 三出口弹窗 |
+| 触发条件 | `FocusRules.shouldAskForLongRun(elapsed)`，§52.3 定的 `> 7200` 秒 |
+| `requestFinish()` 四条路 | >2h 弹三出口 / ≥60s **静默记入（连弹窗都没有）** / 1~59s 问「要记下来吗」/ 0s 不留 |
+| 暂停 | `elapsedMillis()` 在 `paused` 时 `running = 0`，只返回 `accumulatedMillis` |
+
+于是：不暂停时计时器一路涨过 2 小时会弹；**暂停把判定值冻住了**，挂多久都不涨，
+回来点结束就走静默记入，连修正机会都没有。通知栏「结束」
+（`FocusActionReceiver`）永远不弹窗是 §52.3 的有意设计，不是漏改。
+
+★ 顺手纠正两个容易走偏的判断：
+
+- 代码里阈值**一直是 2 小时**，`git log -S LONG_RUN_THRESHOLD_SECONDS` 只有
+  v1.0.9 的 `7bd4be8` 一次引入，从没是 1 小时；「超过一小时会弹」是记错。
+- **单纯把 7200 降到 3600 修不好暂停场景** —— 暂停时 elapsed 是冻结值，
+  降阈值完全碰不到它。必须换判定输入。
+
+### 68.2 判定看墙钟跨度，落库仍用净时长
+
+四级顺序结论：**第 1 级复用** `FocusRules` 纯函数、`askLongRunSeconds` 弹窗、
+`DurationInputDialog`、`FocusEngine.finishEarly(overrideSeconds)`；第 2 级官方组件 /
+第 3 级开源参考**都不适用**（不引入新组件 / 新算法）；第 4 级只新增纯函数 + 单测，
+不动 `FocusRun` / `FocusStore` 数据结构。
+
+| 改动 | 内容 |
+| --- | --- |
+| `LONG_RUN_THRESHOLD_SECONDS` | `7200 → 3600`（zuige 的「超过一小时」口径） |
+| 新增 `wallSpanSeconds(run, now)` | `(now - startedAt)/1000`，含暂停、墙钟回拨夹到 0 |
+| `shouldAskForLongRun(elapsed, span)` | `elapsed >= 60 && span > 3600`，净时长太短仍走短时确认 |
+| `FocusViewModel.requestFinish()` | 传跨度；`askLongRunSeconds` 存的仍是**净时长** |
+| 弹窗 | 文案去掉「看起来像是忘了结束」，改成「暂停时间不计入…可以改成实际专注的时长」 |
+| `FocusScreen` | `maxCustomMinutes < 1` 时隐藏「自定义」—— 否则 `min..max = 1..0`，确定键永远禁用，是个关不掉的死对话框 |
+
+★ **落库口径不变**：「按当前值计入」和 `FocusEngine.finishEarly()` 仍记净专注时长，
+暂停几小时不会被算进统计。墙钟跨度只用来决定「问不问」，绝不拿来落库。
+不暂停时 `span == elapsed`，行为与旧口径一致；暂停时两边才分叉，
+这正是要消掉的不对称。
+
+**代价（如实记录）**：60~120 分钟的正常专注，点结束会多一步「按当前值计入」。
+若日后要收回，只需把常量改回 7200，`shouldAskForLongRun` 不用动。
+
+### 68.3 主页 FAB 长按拖动
+
+诉求：右下角加号会挡住最下面一条待办的时间，希望能像悬浮球那样挪开，
+「可以拖动就行」。
+
+四级顺序结论：**第 1 级现成件齐全** —— `TodoListScreen.kt` 的
+`ReorderableBoardList`（板块拖动排序）已经把官方
+`detectDragGesturesAfterLongPress` + `coerceIn` 边界 clamp + 「只在真变化时才写盘」
+这套范式跑通了，直接照搬；第 2 级就是官方 Foundation API 本身；
+第 3 级开源参考不需要；第 4 级只补 `util/FabPosition.kt` 纯函数（clamp /
+归一化往返）+ 5 条单测。
+
+| 决策 | 理由 |
+| --- | --- |
+| FAB 从 `Scaffold.floatingActionButton` 槽移到 content 的 `BoxWithConstraints` | 槽的位置由 Scaffold 内部算，拿不到内容区尺寸就没法给拖动做精确边界；`BoxWithConstraints` 的 `maxWidth/maxHeight` **已扣掉底栏**，不用猜 NavigationBar 高度或 insets。自己 `align(BottomEnd) + padding(16dp)`，视觉位置与 M3 默认一致 |
+| 位移用 `Modifier.offset { }` 的 lambda 版 | layout 阶段读 State（deferred read），拖动全程零重组；且是**布局**位移，点击热区跟着走。`graphicsLayer` 只改绘制，热区不保证 |
+| 手势挂在 FAB 的 modifier 上 | 在 FAB 内部 `clickable` 之前：短按不消费、照常打开添加面板；长按后才接管并消费后续 move |
+| `pointerInput(minFabDx, minFabDy)` | key 带边界值 —— 项目踩过的坑：`pointerInput` 只在 key 变化时重建，不带上会在旋屏后继续用旧边界 |
+| 位置存 `SettingsRepo` 的**归一化 0..1 比例** | 旋屏 / 换屏密度 / 恢复备份后按当前屏幕换算，不会跑偏或出界。`BackupRules.importableSetting()` 除隐私版本外全放行，**自动跟着备份走，不用改备份模块** |
+| 不吸附边缘 | 贴边反而可能还挡着；停哪算哪，最贴合「可以拖动就行」 |
+| 拖动反馈只做 1.08 倍 `graphicsLayer` 缩放 | 不用 elevation —— §52.4 的方形阴影根因就是「带 elevation 的 FAB 套在 AnimatedVisibility 里」，四档归零不能破 |
+
+**红线一律不动**：FAB 恒 56dp、24dp 图标、`primary + onPrimary`、elevation 四档归零、
+`fadeIn(180)/fadeOut(150)`、列表 `contentPadding.bottom`、§67 的文字进场时序。
+垂直上边界让出 `statusBarDp + 64dp` 顶栏，FAB 不会钻到浮层后面被遮住。
+
+### 68.4 验证与收尾
+
+- `:app:testDebugUnitTest` **396 条全绿** → `:app:assembleRelease` `BUILD SUCCESSFUL`。
+  新增 `FabPositionTest` 5 条（边界 / clamp / 比例往返 / 极小屏不除零）、
+  `FocusRulesTest` 改 1 条 + 新增 3 条（暂停冻结但跨度照涨 / 短净时长不弹三出口 /
+  墙钟回拨）。
+- ★ 第一次跑挂了 2 条，都是**测试数据算错**、不是实现问题：
+  `70*60 = 4200 > 3600` 却写成 `assertFalse`；`3_600_001 - 1_000 = 3_599_001ms`
+  = 3599 秒却断言 3600。改数据后全绿 —— 阈值类单测自己先算清楚再写断言。
+- **合规分支本轮未同步**：`release/vivo-store`（versionCode 35）的
+  `requestFinish()` 只有三条路，压根没有 `askLongRunSeconds` / `shouldAskForLongRun`
+  / `DurationInputDialog`，那边的非暂停结束**也不会弹窗**，因此不存在本 bug。
+  硬套「两条线各落一次」等于要把 §52.3 整套功能搬过去，超出修 bug 范围，
+  且该分支基线落后 main 较多（无 `backup/` / `update/` / `ALL_MIGRATIONS`），
+  cherry-pick 冲突面大。本轮只改 main。
+  ⚠ FAB 拖动是纯 UI 功能，合规分支**应当**补，尚未补 —— 这是本轮留下的欠账。
+- 版本号不动、不发版：不碰 Release / Hexo / 博客文章 / `latest.json`。
+- Manifest 零改动，`allowBackup=false` 两边不变。

@@ -204,14 +204,53 @@ class FocusRulesTest {
         assertEquals(25, FocusRules.DEFAULT_MINUTES)
     }
 
-    // ---------- 超长专注（v1.0.9）----------
+    // ---------- 超长专注（v1.0.9 引入 / §68 改判定）----------
 
     @Test
-    fun longRunAsksOnlyStrictlyAboveTwoHours() {
-        assertFalse(FocusRules.shouldAskForLongRun(7199))
-        assertFalse(FocusRules.shouldAskForLongRun(7200))
-        assertTrue(FocusRules.shouldAskForLongRun(7201))
-        assertTrue(FocusRules.shouldAskForLongRun(5 * 3600))
+    fun longRunAsksOnlyStrictlyAboveOneHour() {
+        assertEquals(3600, FocusRules.LONG_RUN_THRESHOLD_SECONDS)
+        // 不暂停时墙钟跨度 == 净专注时长，边界严格大于才问
+        assertFalse(FocusRules.shouldAskForLongRun(3599, 3600))
+        assertFalse(FocusRules.shouldAskForLongRun(3600, 3600))
+        assertTrue(FocusRules.shouldAskForLongRun(3601, 3601))
+        assertTrue(FocusRules.shouldAskForLongRun(5 * 3600, 5 * 3600))
+    }
+
+    @Test
+    fun pausedRunStillAsksBecauseWallClockSpanKeepsGrowing() {
+        // §68 修的不对称：跑了 70 分钟 → 暂停 → 挂 130 分钟回来点结束。
+        // 净时长冻在 70 分钟，但计时器已经开了 200 分钟。
+        val elapsed = 70 * 60
+        val span = 200 * 60
+        assertTrue(FocusRules.shouldAskForLongRun(elapsed, span))
+        // 一直没暂停的等价场景同样该问 —— 两条路行为一致
+        assertTrue(FocusRules.shouldAskForLongRun(span, span))
+        // 没挂够时间（跨度 30 分钟，仍 <= 1 小时）就还是静默记入
+        assertFalse(FocusRules.shouldAskForLongRun(30 * 60, 30 * 60))
+    }
+
+    @Test
+    fun shortNetTimeNeverGetsTheThreeWayDialog() {
+        // 开了 10 秒就暂停、挂一整天：不该弹复杂三出口，仍走「要记下来吗」
+        assertFalse(FocusRules.shouldAskForLongRun(10, 24 * 3600))
+        assertFalse(FocusRules.shouldAskForLongRun(59, 5 * 3600))
+    }
+
+    @Test
+    fun wallSpanIncludesPauseButElapsedDoesNot() {
+        val r = FocusRun(
+            plannedSeconds = 0,
+            accumulatedMillis = 10_000L,
+            segmentStartMillis = 0L,
+            paused = true,
+            startedAtMillis = 1_000L,
+            countUp = true
+        )
+        // 暂停中：净时长 10 秒，墙钟跨度 1 小时（startedAt=1000，now=1000+3600_000）
+        assertEquals(10, FocusRules.elapsedSeconds(r, 3_601_000L))
+        assertEquals(3600, FocusRules.wallSpanSeconds(r, 3_601_000L))
+        // 墙钟回拨不产生负数
+        assertEquals(0, FocusRules.wallSpanSeconds(r, 0L))
     }
 
     @Test

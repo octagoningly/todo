@@ -52,8 +52,11 @@ object FocusRules {
      * 中途结束时「够不够长」的分界线（秒）。
      *
      * 语义（zuige 定的口径）：
-     *  - **≥ 60 秒** → 这是真干了一会儿，直接记入统计（`completed = false`）；
+     *  - **≥ 60 秒** → 这是真干了一会儿，记入统计（`completed = false`）；
      *  - **< 60 秒** → 分不清是误触还是真开始了，弹一句问用户记不记。
+     *
+     * ★ §68 起，`requestFinish()` 在这条之前还会先判 [shouldAskForLongRun]，
+     *   所以「≥ 60 秒」不等于「一定静默记入」：开了超过一小时会先弹三出口。
      *
      * 之所以不是"短的一律丢弃"：30 秒也可能是真的开了个头，
      * 用户自己最清楚；而 40 分钟的提前结束绝不该因为"没走完"就白干。
@@ -61,16 +64,30 @@ object FocusRules {
     const val ASK_THRESHOLD_SECONDS = 60
 
     /**
-     * 「这次是不是忘了结束」的门槛：超过 2 小时就别一声不吭按原值记进统计。
+     * 「这次计时器开了太久」的门槛：超过 1 小时就别一声不吭按原值记进统计。
      *
-     * ★ 实际只有**正计时**会越过它：倒计时的 elapsed 被 [elapsedMillis] 截到
-     *   planned，走完就自动 complete；正计时没有终点，忘了关能一直涨。
-     *   （超长自定义倒计时提前结束是唯一例外，同样该问。）
+     * ★ §68（2026-11-12）：从 2 小时降到 **1 小时**（zuige 的口径是「计时器
+     *   超过一小时，点结束就该能自己改时长」）。
+     *
+     * ★ 判定看的是 [wallSpanSeconds]（墙钟跨度），**不是**净专注时长：
+     *   [elapsedMillis] 在暂停时被冻住，只按净时长判的话，「跑一小时多 → 暂停
+     *   → 挂一阵再点结束」就再也问不出来，跟一直没暂停直接结束行为不一致。
+     *   不暂停时墙钟跨度 == 净专注时长，与旧口径逐字节一致。
      */
-    const val LONG_RUN_THRESHOLD_SECONDS = 2 * 60 * 60
+    const val LONG_RUN_THRESHOLD_SECONDS = 60 * 60
 
-    fun shouldAskForLongRun(elapsedSeconds: Int): Boolean =
-        elapsedSeconds > LONG_RUN_THRESHOLD_SECONDS
+    /**
+     * 手动「结束」时要不要弹「按当前值 / 自定义 / 不计入」。
+     *
+     * @param elapsedSeconds 净专注时长（暂停不计），决定落库值与自定义上限
+     * @param wallSpanSeconds 从 startedAt 到现在的墙钟跨度（含暂停），决定要不要问
+     *
+     * 净时长 < 60 秒仍走 [shouldAskBeforeDiscard]，不给三出口 ——
+     * 「开了 10 秒就暂停、挂一天」不该弹一个复杂对话框。
+     */
+    fun shouldAskForLongRun(elapsedSeconds: Int, wallSpanSeconds: Int): Boolean =
+        elapsedSeconds >= ASK_THRESHOLD_SECONDS &&
+            wallSpanSeconds > LONG_RUN_THRESHOLD_SECONDS
 
     /** 自定义时长（分钟）上限：换算回秒后必须**严格小于**当前值。 */
     fun maxCustomMinutes(elapsedSeconds: Int): Int = (elapsedSeconds - 1) / 60
@@ -113,6 +130,17 @@ object FocusRules {
     fun elapsedSeconds(run: FocusRun, nowMillis: Long): Int =
         (elapsedMillis(run, nowMillis) / 1000L).toInt()
 
+    /**
+     * 从 [FocusRun.startedAtMillis] 到现在过了多少秒（墙钟跨度，**含暂停**）。
+     *
+     * 和 [elapsedMillis] 的区别：那个是「真正专注了多久」，暂停时冻结；
+     * 这个是「这次计时器开了多久」，暂停期间照常走。只用来判「要不要给用户
+     * 一次修正时长的机会」（见 [shouldAskForLongRun]），**绝不拿来落库** ——
+     * 暂停不该算专注时长，这条红线由 [FocusEngine.finishEarly] 守着。
+     */
+    fun wallSpanSeconds(run: FocusRun, nowMillis: Long): Int =
+        ((nowMillis - run.startedAtMillis).coerceAtLeast(0L) / 1000L).toInt()
+
     /** 剩余毫秒，不为负。正计时恒为 0（没有终点）。 */
     fun remainingMillis(run: FocusRun, nowMillis: Long): Long =
         if (run.countUp) 0L
@@ -134,7 +162,7 @@ object FocusRules {
     fun isFinished(run: FocusRun, nowMillis: Long): Boolean =
         !run.countUp && elapsedMillis(run, nowMillis) >= run.plannedMillis
 
-    /** 中途结束且够长 → 不问，直接记。 */
+    /** 净时长够长。调用方排在三出口判定之后，命中即「没被拦下，直接记」。 */
     fun shouldRecordSilently(elapsedSeconds: Int): Boolean = elapsedSeconds >= ASK_THRESHOLD_SECONDS
 
     /** 中途结束但太短 → 问一句「要记下来吗」。0 秒不问（什么都没发生）。 */

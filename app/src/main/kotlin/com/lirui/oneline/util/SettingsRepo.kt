@@ -50,12 +50,40 @@ object SettingsRepo {
     private const val KEY_FOCUS_RING_ROTATION = "focus_ring_rotation"
     private const val KEY_FOCUS_RING_SHIMMER = "focus_ring_shimmer"
     private const val KEY_FOCUS_RING_INTERVAL = "focus_ring_interval_seconds"
+    // §68 主页 FAB 长按拖动后的位置（归一化 0..1）。放进 oneline_settings 会
+    // 自动被备份带走：BackupRules.importableSetting 除隐私版本外全放行，不用改备份模块。
+    private const val KEY_FAB_OFFSET_X = "fab_offset_x"
+    private const val KEY_FAB_OFFSET_Y = "fab_offset_y"
     // 退役键（保留、永不读取）：widget_compact_show_date / widget_standard_show_date /
     // widget_show_weekday —— 见下方「桌面小组件」段落的说明。
 
     const val FOLLOW_SYSTEM = 0
     const val LIGHT = 1
     const val DARK = 2
+
+    // ---------- 主页 FAB 位置（§68 长按拖动）----------
+
+    /**
+     * 相对默认右下角的归一化偏移，0 = 右下角原位，1 = 该方向最远端。
+     * 存比例不存像素：旋屏 / 换屏密度 / 恢复备份后按当前屏幕换算，不会跑偏。
+     * 换算是纯函数 [FabPosition]，读回来统一夹到 0..1（防旧值 / 脏数据）。
+     */
+    fun fabOffsetX(context: Context): Float =
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .getFloat(KEY_FAB_OFFSET_X, 0f).coerceIn(0f, 1f)
+
+    fun fabOffsetY(context: Context): Float =
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .getFloat(KEY_FAB_OFFSET_Y, 0f).coerceIn(0f, 1f)
+
+    /** 只在真的拖过之后写一次（和板块拖动排序一个口径，避免每次长按都写盘）。 */
+    fun setFabOffset(context: Context, x: Float, y: Float) {
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putFloat(KEY_FAB_OFFSET_X, x.coerceIn(0f, 1f))
+            .putFloat(KEY_FAB_OFFSET_Y, y.coerceIn(0f, 1f))
+            .apply()
+    }
 
     // ---------- theme ----------
     fun getThemeMode(context: Context): Int =

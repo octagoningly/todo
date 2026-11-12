@@ -21,7 +21,7 @@
 
 两条已知文档时点问题，读到别被带偏：
 
-- `DESIGN.md` 开头的「v1.0 定稿 / 待确认问题见 §9」是早期标题，文件实际已演进到 §57（v1.0.14）。
+- `DESIGN.md` 开头的「v1.0 定稿 / 待确认问题见 §9」是早期标题，文件实际已演进到 §68（2026-11-12）。
 - `docs/STORE-RELEASE.md` 里「关于页没有隐私政策入口、没有首启同意弹窗」是**分叉前快照**，现在只对 `main` 成立。
 
 ---
@@ -67,6 +67,8 @@
 
 改一个规则前先想清楚「已有单测覆盖哪些语义」，别写第二套逻辑（曾因另写一套分组逻辑导致标红口径不一致）。
 
+- ★ 专注**手动结束**：「要不要弹三出口」判**墙钟跨度** `FocusRules.wallSpanSeconds()`（含暂停），**落库永远用净专注时长** `elapsedSeconds()` —— 暂停不计专注是红线，`FocusEngine` 别碰；阈值 `LONG_RUN_THRESHOLD_SECONDS = 3600`（§68 从 7200 降下来），净时长 < 60 秒仍走短时确认，`askLongRunSeconds` 存的是净时长；通知栏「结束」不弹窗是有意设计（§52.3）。别把两个时间混用，也别只降阈值就算修好暂停场景。
+
 ### 第 2 级：Google / Android 官方
 
 优先用官方 API / 组件 / sample，而不是自己造：
@@ -99,6 +101,7 @@
 - 主题挂 `MaterialExpressiveTheme(motionScheme = MotionScheme.expressive())`；形状阶走 `OneShapes`（extraSmall 8 / small 12 / medium 16 / large 24 / extraLarge 28），**吃主题的组件自动跟随**。
 - 卡片色一律取 `ui/theme/Tokens.kt`，不写死 ARGB、不另造 `surfaceVariant2`；深色底「抬明度保色相」，不用 alpha 混出脏色。
 - **FAB 恒用经典 56dp**：`FloatingActionButton` + 24dp 图标 + 列表 `contentPadding.bottom=8dp`；底色 `primary` + `onPrimary`，elevation 四档归零 + 只留 fade。别把「全局形状阶」和「单个组件尺寸」绑一起改。
+- ★ §68 起 FAB **可长按拖动**（官方 `detectDragGesturesAfterLongPress`，复用 `ReorderableBoardList` 范式），但上一条的 56dp / 配色 / elevation 归零 / fade **一律不变**；位移用 `Modifier.offset{}` 的 lambda 版（layout 位移，点击热区跟着走，别改用 `graphicsLayer`），边界与归一化走 `util/FabPosition.kt` 纯函数，位置存 `SettingsRepo` 的 0..1 比例，**不吸附边缘**。FAB 已从 Scaffold 的 `floatingActionButton` 槽移到 content 的 `BoxWithConstraints`（槽位拿不到内容区尺寸），别搬回去。
 - 字阶只改**字重 / 字距**，不改字号（写死行高的地方很多）。
 - 浅绿底（`primaryContainer`）文字一律配 `onPrimaryContainer`；主按钮统一 50% 圆角胶囊。
 - 时区只用 `AppTime.ZONE`（`Asia/Shanghai`）；**M3 DatePicker 的毫秒是 UTC 当日 00:00**，进出必须走 `AppTime.pickerMillis` / `pickerDate`。
