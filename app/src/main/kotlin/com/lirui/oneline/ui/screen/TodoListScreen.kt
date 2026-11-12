@@ -484,9 +484,9 @@ private fun TodoAppContent(
     var pageMotion by remember { mutableStateOf(pageMotionEnabled(context)) }
     val reduceMotion = systemReduceMotion(context) || !pageMotion
 
-    // ★ §66：切 tab 时先让旧页文字「回撤」（visible = false），等官方默认
-    //   fadeOut(tween(90)) 的 90ms 走完再换页，新页文字再展开（visible = true）。
-    //   displayTab 只驱动页面内容；顶栏标题 / 底栏高亮 / FAB 仍读外层 tab，点击立刻响应。
+    // ★ §67：切 tab 分三段 —— 旧页文字回撤 150ms → 硬切换页且新页以空串挂载
+    //   一帧（32ms）→ 新页文字 "" → 整句展开。displayTab 只驱动页面内容；
+    //   顶栏标题 / 底栏高亮 / FAB 仍读外层 tab，点击立刻响应。
     var displayTab by remember { mutableStateOf(tab) }
     var textVisible by remember { mutableStateOf(true) }
     var phaseReady by remember { mutableStateOf(false) }
@@ -499,9 +499,16 @@ private fun TodoAppContent(
             displayTab = tab
             textVisible = true
         } else {
+            // ① 旧页文字末端收起：默认 fadeOut(90) + spring 尺寸收缩，
+            //   留 150ms 让「从句末卷走」真的看得见（§66 只给 90ms，刚起步就被换页打断）。
             textVisible = false
-            delay(90)
+            delay(150)
+            // ② 硬切换页；visible 仍 false，新页文字先以空串挂载一帧。
+            //   ★ 若与 textVisible = true 同帧发生，新页 AnimatedContent 初始 state
+            //     就是完整文字、没有 initial→target 过渡，入场动效根本不会播（§66 的病根）。
             displayTab = tab
+            delay(32)
+            // ③ 新页文字 "" → 整句，播放末端展开 + 先缩一下再淡入。
             textVisible = true
         }
     }
@@ -571,32 +578,29 @@ private fun TodoAppContent(
                     // 只吃底栏高度：状态栏由每个列表的 contentPadding.top 负责（见 statusBarDp）。
                     .padding(bottom = padding.calculateBottomPadding())
             ) {
-                // ★ 2026-11-08（§66）：四个 tab 的**容器硬切**，只有文字进出场。
-                //   §62 / §64 的整屏滑动是 ImageToolbox 的页面栈导航动画，不是文字动效；
-                //   §65 自己编的「alpha + 18dp 上滑」也不对 —— 源码里文字走的是
-                //   `AnimatedContent` 默认转场（SizeTransform(clip = true) 的末端展开 / 收起）。
-                //   ★ targetState 用 displayTab：先回撤旧页文字 90ms 再换页，
-                //     新页文字展开；content lambda 里仍用 targetTab，不能用外层 tab。
-                AnimatedContent(
-                    targetState = displayTab,
-                    transitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.background),
-                    label = "tabContent"
-                ) { targetTab ->
-                    // ★ §66：只有这一层里的文字会进出场；顶栏 / 底栏 / FAB 读不到
-                    //   这个 CompositionLocal，保持原样。visible 由外层显隐状态机驱动。
-                    //   remember 缓存 spec：staticCompositionLocalOf 按对象引用判变化，
-                    //   不缓存的话页面里任何 state 重组都会把整棵文字树带着重组。
-                    val textEnterSpec = remember(targetTab, textVisible, reduceMotion) {
-                        TextEnterSpec(
-                            visible = textVisible,
-                            replayKey = targetTab,
-                            reduceMotion = reduceMotion
-                        )
-                    }
-                    CompositionLocalProvider(LocalTextEnter provides textEnterSpec) {
+                // ★ 2026-11-08（§67）：四个 tab 的**容器硬切**，只有文字进出场。
+                //   §66 把 CompositionLocalProvider 挂在 content lambda 里、且换页与
+                //   visible = true 同帧，真机抓帧证实页面文字动效根本没播（见 DESIGN §67）。
+                //   ★ provider 必须在这个 AnimatedContent **外面**，显隐才能穿透到文字层；
+                //   targetState 仍用 displayTab，content lambda 里仍用 targetTab。
+                val textEnterSpec = remember(displayTab, textVisible, reduceMotion) {
+                    TextEnterSpec(
+                        visible = textVisible,
+                        replayKey = displayTab,
+                        reduceMotion = reduceMotion
+                    )
+                }
+                CompositionLocalProvider(LocalTextEnter provides textEnterSpec) {
+                    AnimatedContent(
+                        targetState = displayTab,
+                        transitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.background),
+                        label = "tabContent"
+                    ) { targetTab ->
+                        // ★ §67：content lambda 里只放页面内容；文字层显隐由外层
+                        //   CompositionLocalProvider 统一驱动，顶栏 / 底栏 / FAB 读不到它。
                         when (targetTab) {
                             TAB_TODO -> TodoList(
                                 active,
