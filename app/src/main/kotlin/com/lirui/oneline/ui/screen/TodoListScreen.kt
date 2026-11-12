@@ -563,13 +563,19 @@ private fun TodoAppContent(
                 val minFabDy = FabPosition.minOffset(
                     with(density) { maxHeight.toPx() }, fabSizePx, fabMarginPx, fabTopSafePx
                 )
-                var fabDx by remember { mutableFloatStateOf(0f) }
-                var fabDy by remember { mutableFloatStateOf(0f) }
+                // ★ §69：吸附半径 = 一个 FAB 身位（56dp + 16dp 边距）。只有横竖都
+                //   没拖出这个范围才吸回默认右下角，其它位置停哪算哪。
+                val snapRadiusPx = fabSizePx + fabMarginPx
+                // ★ 位移改 Animatable：拖动 snapTo 立刻跟手，松手吸附才 animateTo。
+                //   值只在 offset{} / 写盘时读（layout 阶段 deferred read），全程零重组。
+                val fabDx = remember { Animatable(0f) }
+                val fabDy = remember { Animatable(0f) }
+                val fabScope = rememberCoroutineScope()
                 var fabDragging by remember { mutableStateOf(false) }
                 // 冷启动 / 旋屏 / 分屏：把存的比例换算回当前屏幕的 px，并重新夹一遍边界。
                 LaunchedEffect(minFabDx, minFabDy) {
-                    fabDx = FabPosition.toOffsetPx(SettingsRepo.fabOffsetX(context), minFabDx)
-                    fabDy = FabPosition.toOffsetPx(SettingsRepo.fabOffsetY(context), minFabDy)
+                    fabDx.snapTo(FabPosition.toOffsetPx(SettingsRepo.fabOffsetX(context), minFabDx))
+                    fabDy.snapTo(FabPosition.toOffsetPx(SettingsRepo.fabOffsetY(context), minFabDy))
                 }
 
                 // ★ 2026-11-08（§67）：四个 tab 的**容器硬切**，只有文字进出场。
@@ -768,7 +774,7 @@ private fun TodoAppContent(
                     exit = fadeOut(tween(150)),
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .offset { IntOffset(fabDx.roundToInt(), fabDy.roundToInt()) }
+                        .offset { IntOffset(fabDx.value.roundToInt(), fabDy.value.roundToInt()) }
                         .padding(16.dp)
                 ) {
                     // ★ 方形阴影（v1.0.10）：根因是「带 elevation 的 FAB 套在
@@ -792,7 +798,7 @@ private fun TodoAppContent(
                                 scaleX = s
                                 scaleY = s
                             }
-                            .pointerInput(minFabDx, minFabDy) {
+                            .pointerInput(minFabDx, minFabDy, snapRadiusPx) {
                                 // ★ 复用 ReorderableBoardList 的范式：官方
                                 //   detectDragGesturesAfterLongPress —— 短按不消费、照常
                                 //   打开添加面板；长按后才接管并消费后续 move。
@@ -807,18 +813,43 @@ private fun TodoAppContent(
                                     onDrag = { change, amount ->
                                         change.consume()
                                         moved = true
-                                        fabDx = FabPosition.clamp(fabDx, amount.x, minFabDx)
-                                        fabDy = FabPosition.clamp(fabDy, amount.y, minFabDy)
+                                        // Main.immediate：launch 在当前调用栈同步跑到第一个
+                                        // 挂起点，而 snapTo 不挂起 —— 位移仍是「手指到哪
+                                        // FAB 到哪」，不会滞后；同时取消未跑完的吸附动画。
+                                        fabScope.launch {
+                                            fabDx.snapTo(
+                                                FabPosition.clamp(fabDx.value, amount.x, minFabDx)
+                                            )
+                                            fabDy.snapTo(
+                                                FabPosition.clamp(fabDy.value, amount.y, minFabDy)
+                                            )
+                                        }
                                     },
                                     onDragEnd = {
                                         fabDragging = false
                                         // 只在真的动过才写盘：一次长按不该留一条写操作。
                                         if (moved) {
+                                            val snapped = FabPosition.shouldSnapToBottomEnd(
+                                                fabDx.value, fabDy.value, snapRadiusPx
+                                            )
+                                            // ★ 写盘用**吸附后的目标值**，不是弹簧动画中间帧。
+                                            val finalX = if (snapped) 0f else fabDx.value
+                                            val finalY = if (snapped) 0f else fabDy.value
                                             SettingsRepo.setFabOffset(
                                                 context,
-                                                FabPosition.toFraction(fabDx, minFabDx),
-                                                FabPosition.toFraction(fabDy, minFabDy)
+                                                FabPosition.toFraction(finalX, minFabDx),
+                                                FabPosition.toFraction(finalY, minFabDy)
                                             )
+                                            if (snapped) {
+                                                // 临界阻尼 spring，参数与板块拖动归位一致，
+                                                // 不另造一套动效口径。
+                                                val spec = spring<Float>(
+                                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                                    stiffness = 1500f
+                                                )
+                                                fabScope.launch { fabDx.animateTo(0f, spec) }
+                                                fabScope.launch { fabDy.animateTo(0f, spec) }
+                                            }
                                         }
                                     },
                                     onDragCancel = { fabDragging = false }

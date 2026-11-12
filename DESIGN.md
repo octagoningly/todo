@@ -5370,5 +5370,54 @@ zuige 报：「专注计时，暂停，超过一个小时，点结束，却没�
   且该分支基线落后 main 较多（无 `backup/` / `update/` / `ALL_MIGRATIONS`），
   cherry-pick 冲突面大。本轮只改 main。
   ⚠ FAB 拖动是纯 UI 功能，合规分支**应当**补，尚未补 —— 这是本轮留下的欠账。
+  → **纠正（同日 23:06，zuige）**：合规分支正在申请软件著作权，代码冻结，
+    申请期间不动。上面这条「欠账」判断**作废** —— 不是漏做，是不该做；
+    不补、不催，等解冻后再评估。已写进 `AGENTS.md §4` 作为临时红线，详见 §69.2。
 - 版本号不动、不发版：不碰 Release / Hexo / 博客文章 / `latest.json`。
 - Manifest 零改动，`allowBackup=false` 两边不变。
+
+---
+
+## §69 FAB 只在右下角吸附 + 合规分支软著冻结（2026-11-12 晚）
+
+### 69.1 只吸附右下角
+
+zuige：「做一个 FAB 拖动时候，右下角自动吸附，其他地方不用吸附，只需要右下角」。
+
+§68 的口径是「停哪算哪、完全不吸附」。本轮**只在这一处**加吸附，其它行为不动：
+
+| 改动 | 内容 |
+| --- | --- |
+| `FabPosition.shouldSnapToBottomEnd(dx, dy, r)` | `dx >= -r && dy >= -r` 才吸。位移恒 <= 0，只需判下界；`r` 夹到 >= 0 防脏值 |
+| 吸附半径 | `fabSizePx + fabMarginPx` = 56dp + 16dp = **72dp**，一个 FAB 身位；拖出这个范围就算「真想挪走」，停哪算哪 |
+| 不吸附其它位置 | 不贴左右边缘、不贴中线、不吸顶 —— 贴边反而可能还挡着待办时间 |
+| 动画 | 位移 State 换成 `Animatable`：拖动 `snapTo` 跟手、松手吸附才 `animateTo(0, spring)`；参数与 `ReorderableBoardList` 的板块归位一致（临界阻尼 / stiffness 1500），不另造口径 |
+| 写盘 | 用**吸附后的目标值**（吸附时 0）算比例，不用弹簧动画中间帧，否则重启后位置对不上 |
+
+★ `detectDragGesturesAfterLongPress` 的 `onDrag` 是**非 suspend** 回调，
+`Animatable.snapTo` 是 suspend —— 用 `rememberCoroutineScope().launch` 包一层。
+Android 上 `rememberCoroutineScope()` 走 `Main.immediate`，`launch` 在当前调用栈
+同步执行到第一个挂起点，而 `snapTo` 不挂起，所以位移依然跟手、不会滞后；
+新的 `snapTo` 也会取消尚未跑完的吸附动画。`pointerInput` 的 key 补上
+`snapRadiusPx`，旋屏后不会继续用旧半径。
+
+四级顺序：**第 1 级复用**现成的 `Animatable` / `spring` / `FabPosition` 与
+`ReorderableBoardList` 范式；**第 2 级**是官方 API 本身；**第 3 级**开源参考不适用；
+**第 4 级**只补一个纯函数 + 2 条单测。56dp / elevation 四档归零 / fade /
+`contentPadding.bottom` / §67 动效时序全部未动。
+
+### 69.2 合规分支软著冻结（推翻 §68.4 的「欠账」判断）
+
+zuige 澄清：`release/vivo-store` 正在**申请软件著作权**，最好先不要动代码。
+
+- §68.4 里「FAB 拖动合规分支应当补，尚未补，是欠账」的判断**作废**：
+  不是漏做，是**不该做**。申请期间不改代码、不 cherry-pick、不补功能、不发版。
+- 已在 `AGENTS.md §4` 加临时冻结红线，覆盖「功能改动两条线各落一次」的常规要求；
+  解冻由 zuige 明确通知。
+- §68 与 §69 都**只落 main**，合规分支零改动。
+
+### 69.3 验证
+
+- `:app:testDebugUnitTest` **398 条 / 0 失败** → `:app:assembleRelease` `BUILD SUCCESSFUL`。
+  `FabPositionTest` 从 5 条增至 7 条（右下角吸附区边界 + 负半径不放大吸附区）。
+- 版本号不动、不发版；Manifest 零改动；合规分支零改动。

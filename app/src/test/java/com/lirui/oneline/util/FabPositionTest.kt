@@ -1,6 +1,8 @@
 package com.lirui.oneline.util
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -58,5 +60,29 @@ class FabPositionTest {
         assertEquals(0f, FabPosition.toFraction(0f, min), 0.001f)
         assertEquals(0f, FabPosition.toOffsetPx(1f, min), 0.001f)
         assertEquals(0f, FabPosition.clamp(0f, -100f, min), 0.001f)
+    }
+
+    // ---------- §69 只吸附右下角 ----------
+
+    @Test
+    fun onlyBottomEndCornerSnapsBack() {
+        val r = 72f
+        assertTrue(FabPosition.shouldSnapToBottomEnd(0f, 0f, r))
+        assertTrue(FabPosition.shouldSnapToBottomEnd(-30f, -30f, r))
+        assertTrue(FabPosition.shouldSnapToBottomEnd(-71f, -10f, r))
+        assertTrue(FabPosition.shouldSnapToBottomEnd(-10f, -71f, r))
+        // 任一方向拖出一个 FAB 身位就不算右下角了，停哪算哪
+        assertFalse(FabPosition.shouldSnapToBottomEnd(-73f, -10f, r))
+        assertFalse(FabPosition.shouldSnapToBottomEnd(-10f, -73f, r))
+        assertFalse(FabPosition.shouldSnapToBottomEnd(-200f, -200f, r))
+    }
+
+    @Test
+    fun snapRadiusIsNeverNegative() {
+        assertTrue(FabPosition.shouldSnapToBottomEnd(0f, 0f, 0f))
+        assertFalse(FabPosition.shouldSnapToBottomEnd(-1f, 0f, 0f))
+        // 负半径按 0 处理，不会把整个屏幕都判成吸附区
+        assertTrue(FabPosition.shouldSnapToBottomEnd(0f, 0f, -10f))
+        assertFalse(FabPosition.shouldSnapToBottomEnd(-1f, 0f, -10f))
     }
 }

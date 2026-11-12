@@ -38,4 +38,22 @@ object FabPosition {
     /** 存盘比例 → 当前屏幕下的 px 偏移。 */
     fun toOffsetPx(fraction: Float, minOffsetPx: Float): Float =
         if (minOffsetPx >= 0f) 0f else fraction.coerceIn(0f, 1f) * minOffsetPx
+
+    /**
+     * 松手时该不该吸回**默认右下角**（§69）。
+     *
+     * ★ 只认右下角：横竖都还在默认位置向外 `snapRadiusPx` 内才吸，
+     *   其余位置一律停哪算哪 —— 不吸附左右边缘、不吸附中线、不吸顶。
+     *   `offsetX/offsetY` 恒 <= 0（合法区间 `[minOffset, 0]`），所以只判下界。
+     *   半径取 FAB 边长 + 边距（56dp + 16dp = 72dp），即「拖出一个 FAB 身位
+     *   才算真的想挪走」。
+     */
+    fun shouldSnapToBottomEnd(
+        offsetX: Float,
+        offsetY: Float,
+        snapRadiusPx: Float
+    ): Boolean {
+        val radius = snapRadiusPx.coerceAtLeast(0f)
+        return offsetX >= -radius && offsetY >= -radius
+    }
 }
