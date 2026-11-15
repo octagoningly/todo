@@ -2545,7 +2545,7 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                 ItemDivider()
                 ListItem(
                     headlineContent = { Text("检查同步链路") },
-                    supportingContent = { Text("读取本机凭证；作业抓取尚未接入") },
+                    supportingContent = { Text("查看链路状态；作业抓取尚未接入") },
                     trailingContent = {
                         Text(
                             "检查",
@@ -2561,7 +2561,11 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                         )
                         // §70.9：不覆盖 loggedIn —— 用户确认过的登录态
                         // 不该被一次 Cookie 名猜测推翻。这里只更新诊断。
-                        diagnostic = briefDiagnosis(platform, probe.loggedIn, probe.cookieNames)
+                        // §70.10：诊断口径改成「链路状态」，不再把自动检测失败写成报错。
+                        diagnostic = briefDiagnosis(
+                            SyncSettings.userConfirmedLogin(context) || loggedIn,
+                            probe.cookieNames
+                        )
                     }
                 )
                 ItemDivider()
@@ -2619,29 +2623,26 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                 SyncSettings.setUserConfirmedLogin(context, true)
                 SyncSettings.setLastLoginAt(context, System.currentTimeMillis())
                 loggedIn = true
-                diagnostic = briefDiagnosis(platform, probe.loggedIn, probe.cookieNames)
+                diagnostic = briefDiagnosis(true, probe.cookieNames)
             }
         )
     }
 }
 
 /**
- * 诊断只留两行**技术信息**：自动检测结论 + 实际读到的 Cookie 名。
- * 不在这里下「已登录 / 未登录」的判断 —— 那个状态由用户确认决定（§70.9）。
+ * §70.10：诊断改成**链路状态**，不再把「自动检测没读到某个 Cookie」写成报错。
+ * 课堂派现状已不写 2022 抓包里的那个 Cookie 名，那行只会让人以为功能坏了。
+ * 当前能如实报告的就是：登录是否被用户确认、作业抓取是否接入、本机读到哪些凭证。
  */
 private fun briefDiagnosis(
-    platform: SyncPlatform,
-    autoDetected: Boolean,
+    confirmed: Boolean,
     cookieNames: List<String>
 ): String = buildString {
+    append(if (confirmed) "登录：已确认" else "登录：未确认")
+    append(" · 作业抓取：尚未接入\n")
     append(
-        if (autoDetected) "自动检测：读到 ${platform.authCookieName}"
-        else "自动检测：未读到 ${platform.authCookieName}"
-    )
-    append("\n")
-    append(
-        if (cookieNames.isEmpty()) "本机 Cookie：无"
-        else "本机 Cookie：${cookieNames.joinToString(" / ")}"
+        if (cookieNames.isEmpty()) "本机凭证：无 Cookie"
+        else "本机凭证：${cookieNames.size} 项 · ${cookieNames.joinToString(" / ")}"
     )
 }
 

@@ -3,6 +3,7 @@ package com.lirui.oneline.ui.screen
 import android.annotation.SuppressLint
 import android.webkit.CookieManager
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,6 +36,23 @@ import com.lirui.oneline.sync.SyncCredentialStore
 import com.lirui.oneline.sync.SyncPlatform
 import com.lirui.oneline.sync.SyncRules
 import com.lirui.oneline.ui.theme.Text
+
+/**
+ * §70.10 纯布局修正：雨课堂 PC 登录页把 `html` / `body` 锁成固定高度，
+ * 二维码贴在视口最顶、被系统状态栏切掉，而且页面**滚不动**。
+ * 这里只解锁纵向滚动并给顶部留一条空白，让内容能上下移动；
+ * 不读输入框、不拦表单、不取任何页面数据。
+ */
+private const val SCROLL_FIX_JS = """
+(function(){
+  try {
+    var h = document.documentElement, b = document.body;
+    if (h) { h.style.overflowY = 'auto'; h.style.height = 'auto'; }
+    if (b) { b.style.overflowY = 'auto'; b.style.height = 'auto';
+             b.style.paddingTop = '56px'; }
+  } catch (e) {}
+})();
+"""
 
 /**
  * 「在官方页登录第三方平台」的全屏页面。
@@ -107,6 +125,13 @@ fun HomeworkSyncLoginDialog(
                         settings.setSupportZoom(true)
                         settings.builtInZoomControls = true
                         settings.displayZoomControls = false
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageFinished(view: WebView?, finishedUrl: String?) {
+                                // 每次页面加载完都补一次布局修正：SPA 切页 / 重定向后
+                                // 页面可能重新把 overflow 锁回去。
+                                view?.evaluateJavascript(SCROLL_FIX_JS, null)
+                            }
+                        }
                         val cm = CookieManager.getInstance()
                         cm.setAcceptCookie(true)
                         cm.setAcceptThirdPartyCookies(this, true)

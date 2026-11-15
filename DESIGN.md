@@ -5671,3 +5671,51 @@ Cookie 再 `loadUrl(登录页)`，不误伤另一个平台、不碰 App 里的�
 - 四级顺序：复用 `SettingsRepo` 风格的独立 pref 与 `SyncRules` 纯函数；
   官方 `statusBarsPadding` / `navigationBarsPadding` / `WebView`；
   本轮无新增开源参考；手写部分仍是无 Android 依赖的纯函数 + 单测。
+
+---
+
+## §70.10 第四轮反馈：页面可滚动 + 诊断改成链路状态（2026-11-15 深夜）
+
+### 70.10.1 雨课堂二维码仍被截 → 让页面能上下移动
+
+`statusBarsPadding()` 解决的是**系统 inset**，但雨课堂 PC 登录页自己把
+`html` / `body` 锁成了固定高度、二维码贴在视口最顶，而且页面**滚不动** ——
+所以加了 padding 也还是被切。
+
+**修法**：`WebViewClient.onPageFinished` 注入一段纯布局 CSS
+（[`SCROLL_FIX_JS`]）：把 `html` / `body` 的 `overflowY` 解锁为 `auto`、
+高度交回内容，并给 `body` 加 56px 顶部留白。页面从此能上下滑动，
+二维码可以滑到可视区中间；已有的双指缩放继续保留。
+每次 `onPageFinished` 都补一次，覆盖 SPA 切页 / 重定向后样式被重建的情况。
+
+★ 边界：这段注入**只改样式**，不读输入框、不拦表单、不取页面任何数据，
+与「不接触账号密码」的原则不冲突。
+
+### 70.10.2 「检查同步链路还是出问题」
+
+功能其实没坏：按钮只报告链路状态，但上一版诊断把
+「自动检测未读到 `ketangpai_home_remember`」写得像报错，而按钮名又让人
+以为会真的拉作业。课堂派现状已不写这个 Cookie 名，那行永远失败。
+
+**改成中性的链路状态**（`briefDiagnosis(confirmed, cookieNames)`）：
+
+```
+登录：已确认 · 作业抓取：尚未接入
+本机凭证：N 项 · <Cookie 名清单>
+```
+
+- 不再出现「未读到 xxx」这种误导性措辞；Cookie 清单保留作 Q1 定位依据。
+- `supportingContent` 改成「查看链路状态；作业抓取尚未接入」。
+- ⚠ **明确边界**：本轮仍只有链路骨架，**作业抓取、字段映射、落库、排提醒都没接**。
+  点「检查」是看状态，不是同步。要真正拉作业，下一步必须做
+  「页面内 fetch 调接口」的真实探测，先答完 Q1 / Q2（尤其雨课堂有没有
+  **绝对截止时间**字段），否则接了也是错的数据。
+
+### 70.10.3 验证
+
+- `:app:testDebugUnitTest` **406 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**。
+- `adb install -r` **Success**，仍 1.0.14 / 48，数据保留。
+- `compileSdk` 临时对齐本机 37 后改回 36，`build.gradle.kts` 零 diff。
+- 四级顺序：复用 `SyncRules` 纯函数与现有设置组件；官方 `WebViewClient` /
+  `evaluateJavascript` / `statusBarsPadding`；本轮无新增开源参考；
+  手写部分仍是无 Android 依赖的纯函数 + 单测。
