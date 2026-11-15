@@ -154,7 +154,6 @@ import com.lirui.oneline.reminder.NotificationHelper
 import com.lirui.oneline.sync.SyncCredentialStore
 import com.lirui.oneline.sync.SyncEngine
 import com.lirui.oneline.sync.SyncPlatform
-import com.lirui.oneline.sync.SyncRules
 import com.lirui.oneline.sync.SyncSettings
 import com.lirui.oneline.sync.SyncTrigger
 import com.lirui.oneline.ui.MainViewModel
@@ -2439,13 +2438,13 @@ private fun ItemDivider() {
 }
 
 /**
- * 「作业自动导入」设置的整节（实验分支骨架，见 DESIGN.md 本版小节）。
+ * 「作业自动导入」设置的整节（实验分支骨架，见 DESIGN.md §70）。
  *
  * ★ 总闸默认关闭，关掉时只有一行开关 —— 不读 Cookie、不建 WebView、不发请求。
- * ★ 这一节**自读自写**独立的 SharedPreferences，不往 MainActivity 的
- *   key(settingsEpoch) 状态链里加参数：草稿期改动面越小越好，也不会影响备份恢复。
- * ★ 当前只做「登录能不能成」这一件事：作业抓取、落库、排提醒尚未接入，
- *   「手动同步一次」会明确告诉用户链路状态，不做点了没反应的假按钮。
+ * ★ 自读自写独立 SharedPreferences，不往 MainActivity 的 key(settingsEpoch)
+ *   状态链里加参数：草稿期改动面越小越好。
+ * ★ §70.8：说明文字尽量不占屏，详细口径写进 DESIGN.md；
+ *   诊断结果是一块可「×」关掉的临时区域，不是常驻文案。
  */
 @Composable
 private fun HomeworkSyncSection(context: android.content.Context) {
@@ -2469,7 +2468,7 @@ private fun HomeworkSyncSection(context: android.content.Context) {
     SettingsCard {
         ToggleItem(
             label = "自动导入作业",
-            sub = "默认关闭。开启后在平台官方页登录，把作业与截止时间写成待办",
+            sub = "开启后可登录第三方平台（实验性）",
             checked = enabled,
             onChecked = { on ->
                 enabled = on
@@ -2499,8 +2498,7 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                         diagnostic = null
                     }
                 )
-                // 课堂派是统一官网，压根没有「学校域名」这回事 —— 只在雨课堂显示，
-                // 免得对着一个用不上的输入框发懵（§70.7）。
+                // 课堂派是统一官网，用不上；只在雨课堂显示（§70.7）。
                 if (platform == SyncPlatform.YUKETANG) {
                     ItemDivider()
                     OutlinedTextField(
@@ -2509,15 +2507,9 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                             hostDraft = it
                             SyncSettings.setCustomHost(context, it)
                         },
-                        label = { Text("学校雨课堂网址（有就填，没有留空）") },
-                        placeholder = { Text("如 nk.yuketang.cn") },
-                        supportingText = {
-                            Text(
-                                "雨课堂各校是独立子站：填了才会从这个网址打开登录页，" +
-                                    "并从这个域名读取登录凭证。当前：" +
-                                    SyncRules.loginUrl(platform, SyncSettings.host(context, platform))
-                            )
-                        },
+                        label = { Text("学校网址（可留空）") },
+                        placeholder = { Text("nk.yuketang.cn") },
+                        supportingText = { Text("决定登录页与凭证读取域名") },
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -2537,12 +2529,7 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                 ItemDivider()
                 ListItem(
                     headlineContent = { Text("登录${platform.label}") },
-                    supportingContent = {
-                        Text(
-                            if (loggedIn) "检测到 ${platform.authCookieName}（仅本机 Cookie 判定）"
-                            else "未登录 / 未检测到 ${platform.authCookieName}"
-                        )
-                    },
+                    supportingContent = { Text(if (loggedIn) "已登录" else "未登录") },
                     trailingContent = {
                         Text(
                             if (loggedIn) "重新登录" else "登录",
@@ -2556,9 +2543,7 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                 ItemDivider()
                 ListItem(
                     headlineContent = { Text("检查同步链路") },
-                    supportingContent = {
-                        Text("读取本机会话并输出诊断；作业抓取尚未接入")
-                    },
+                    supportingContent = { Text("读取本机凭证；作业抓取尚未接入") },
                     trailingContent = {
                         Text(
                             "检查",
@@ -2568,30 +2553,18 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                     },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     modifier = Modifier.clickable {
-                        // §70.7：不再弹一句固定 Toast，当场把凭证探针的结果摊开给用户看。
                         val host = SyncSettings.host(context, platform)
-                        val snapshot = SyncCredentialStore.snapshot(platform, host)
-                        val probe = SyncEngine.probe(platform, host, snapshot)
+                        val probe = SyncEngine.probe(
+                            platform, host, SyncCredentialStore.snapshot(platform, host)
+                        )
                         loggedIn = probe.loggedIn
-                        diagnostic = buildString {
-                            append("平台：${platform.label}\n")
-                            append("登录页：${probe.loginUrl}\n")
-                            append(
-                                if (probe.loggedIn) "登录凭证：已读到 ${platform.authCookieName}\n"
-                                else "登录凭证：未读到 ${platform.authCookieName}（需先在官方页登录）\n"
-                            )
-                            append(
-                                if (probe.cookieNames.isEmpty()) "本机 Cookie：没有读到任何条目\n"
-                                else "本机 Cookie：${probe.cookieNames.joinToString(" / ")}\n"
-                            )
-                            append(SyncEngine.NOT_IMPLEMENTED_HINT)
-                        }
+                        diagnostic = briefDiagnosis(platform, probe.loggedIn, probe.cookieNames)
                     }
                 )
                 ItemDivider()
                 ListItem(
                     headlineContent = { Text("清除登录状态") },
-                    supportingContent = { Text("清掉本机浏览器会话，并关闭本功能") },
+                    supportingContent = { Text("清除本机会话并关闭本功能") },
                     trailingContent = {
                         Text(
                             "清除",
@@ -2604,28 +2577,27 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                         SyncCredentialStore.clear(context)
                         enabled = false
                         loggedIn = false
-                        diagnostic = "已清除登录状态并关闭本功能"
+                        diagnostic = null
                     }
                 )
+                // §70.8：诊断只是临时结果，右上角给「×」随时关掉，不做常驻说明。
                 diagnostic?.let { message ->
                     ItemDivider()
-                    Text(
-                        message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
-                    )
+                    Row(
+                        modifier = Modifier.padding(
+                            start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp
+                        ),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Text(
+                            message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { diagnostic = null }) { Text("×") }
+                    }
                 }
-                Text(
-                    "账号密码只在平台官方页面输入，App 不接触、不上传。" +
-                        "课堂派用统一官网；雨课堂若学校有专属网址（如 nk.yuketang.cn），" +
-                        "填了才能从对应站点登录并读到该校的登录凭证。" +
-                        "「检测到」只表示本机有 Cookie，不代表平台校验过凭证有效性。" +
-                        "本功能为实验性，随时可关闭。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-                )
             }
         }
     }
@@ -2642,22 +2614,24 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                 if (probe.loggedIn) {
                     SyncSettings.setLastLoginAt(context, System.currentTimeMillis())
                 }
-                diagnostic = buildString {
-                    append(
-                        if (probe.loggedIn) "已检测到登录凭证 ${platform.authCookieName}。"
-                        else "未检测到登录凭证 ${platform.authCookieName}。"
-                    )
-                    append(
-                        if (probe.cookieNames.isEmpty()) "本机没有读到任何 Cookie"
-                        else "本机读到：${probe.cookieNames.joinToString(" / ")}"
-                    )
-                    if (!probe.loggedIn) {
-                        append("。这些多为匿名会话 Cookie，不能算登录；请完成登录后再点一次")
-                    }
-                }
+                diagnostic = briefDiagnosis(platform, probe.loggedIn, probe.cookieNames)
             }
         )
     }
+}
+
+/** 诊断只留两行：结论 + 需要的认证 Cookie，以及实际读到的 Cookie 名。 */
+private fun briefDiagnosis(
+    platform: SyncPlatform,
+    loggedIn: Boolean,
+    cookieNames: List<String>
+): String = buildString {
+    append(if (loggedIn) "已登录" else "未登录")
+    append(" · 需要 ${platform.authCookieName}\n")
+    append(
+        if (cookieNames.isEmpty()) "读到：无 Cookie"
+        else "读到：${cookieNames.joinToString(" / ")}"
+    )
 }
 
 /** 标题模板最多 24 个 code point —— 一个 emoji 约 1.2 个汉字宽，再多会把事件名挤没。 */

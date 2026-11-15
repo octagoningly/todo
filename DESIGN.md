@@ -5572,3 +5572,50 @@ WebView 用 `weight(1f)` 吃满中间；去掉 `loadWithOverviewMode`，保留
 - 仍按 §70.6 的方式临时对齐 `compileSdk` 37 后改回 36，`build.gradle.kts` 零 diff。
 - 四级顺序：复用设置页组件与 `SyncRules` 纯函数；官方 `Dialog` / `AndroidView` /
   `WebView`；本轮无新增开源参考；手写部分仍是无 Android 依赖的判定 + 单测。
+
+---
+
+## §70.8 第二轮真机反馈：布局推倒重来 + 重新登录入口（2026-11-15）
+
+### 70.8.1 ★ 二维码仍被挡住一半
+
+§70.7 只是把顶栏**压矮**，但它仍在 `Column` 里 —— `AndroidView` 被排在顶栏下方，
+网页内容整体往下推；PC 版登录页自身又不能滚动，二维码正好落在可视区外，
+用户「下移不了」。压矮顶栏不解决**布局占位**这个根因。
+
+**改成 Box 叠加**：`AndroidView(Modifier.fillMaxSize())` 从屏幕顶端铺到底端，
+所有操作按钮作为**底部半透明浮层**叠在网页之上，顶部 100% 干净、二维码零遮挡。
+同时打开 `builtInZoomControls` / `displayZoomControls=false`，页面布局不友好时
+用户还能双指缩放。整个登录页不再有任何常驻文字说明。
+
+### 70.8.2 课堂派「已登录却读不到凭证」
+
+先纠正一个判断：`CookieManager.getCookie()` 读的是**持久化的 Cookie jar**，
+不是「登录那一瞬间的事件」—— 已经登录的状态随时都该读得到，
+和是否刚完成登录无关。
+
+更可能的原因是认证 Cookie 落在了别的域：课堂派登录会跨官网 / 微信入口 /
+API 域。已把 `extraCookieHosts` 扩充到
+`www.ketangpai.cn` / `w.ketangpai.cn` / `coursehome.ketangpai.com` /
+`openapiv5` ~ `openapiv53`，逐个读取再合并。
+
+并按用户要求加了「**重新登录**」按钮（登录页底部浮层）：只清**本平台相关域**的
+Cookie 再 `loadUrl(登录页)`，不误伤另一个平台、不碰 App 里的待办数据。
+清完后完整登录一次，再点「我已完成登录」，诊断会列出实际读到的 Cookie 名，
+据此就能定位缺的是 `ketangpai_home_remember` 还是别的字段。
+
+### 70.8.3 设置页说明太多、诊断关不掉
+
+- 删掉底部那一大段常驻说明，`ToggleItem` / 学校域名 / 各行的 `supportingText`
+  全部压成一行；详细口径留在本文档。
+- 诊断抽成 `briefDiagnosis()`，只留两行：结论 + 需要的认证 Cookie、实际读到的 Cookie 名。
+- 诊断区改成带「**×**」的 `Row`，随时可关；「清除登录状态」不再反过来生成一条新诊断。
+
+### 70.8.4 验证
+
+- `:app:testDebugUnitTest` **406 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**。
+- `adb install -r` **Success**（2026-11-15 22:11:58），仍是 1.0.14 / 48，数据保留。
+- `compileSdk` 临时对齐本机 37 后改回 36，`build.gradle.kts` 零 diff。
+- 四级顺序：复用 `SettingsCard` / `SettingsDropdown` / `SyncRules.parseCookieHeader`；
+  官方 `Box` / `AndroidView` / `WebView` / `TextButton`；本轮无新增开源参考；
+  手写部分仍是无 Android 依赖的纯函数 + 单测。

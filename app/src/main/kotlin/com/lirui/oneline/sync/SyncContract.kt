@@ -40,12 +40,17 @@ enum class SyncPlatform(
         // ketangpai_home_remember，后者内含 token（Max-Age=10800，约 3 小时）。
         authCookieName = "ketangpai_home_remember",
         hintCookieNames = listOf("PHPSESSID", "ketangpai_home_slb"),
+        // §70.8：课堂派登录会跨好几个域（官网 / 微信入口 / API 域），
+        // 认证 Cookie 可能落在其中任意一个上，逐个都读一遍再合并。
         extraCookieHosts = listOf(
             "www.ketangpai.com",
             "ketangpai.com",
+            "www.ketangpai.cn",
+            "w.ketangpai.cn",
+            "coursehome.ketangpai.com",
             "openapiv5.ketangpai.com",
             "openapiv52.ketangpai.com",
-            "w.ketangpai.cn"
+            "openapiv53.ketangpai.com"
         )
     ),
     YUKETANG(
