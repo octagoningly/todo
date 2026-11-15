@@ -2453,13 +2453,15 @@ private fun HomeworkSyncSection(context: android.content.Context) {
     var trigger by remember { mutableStateOf(SyncSettings.triggerMode(context)) }
     var hostDraft by remember { mutableStateOf(SyncSettings.customHost(context)) }
     var showLogin by remember { mutableStateOf(false) }
-    var loggedIn by remember { mutableStateOf(false) }
+    // §70.9：登录态以「用户点过我已完成登录」为准，自动检测只作补充。
+    var loggedIn by remember { mutableStateOf(SyncSettings.userConfirmedLogin(context)) }
     var diagnostic by remember { mutableStateOf<String?>(null) }
 
     // 进入本节 / 换平台时刷一次会话状态。只读 Cookie 名字，永远不取值。
     LaunchedEffect(enabled, platform, hostDraft) {
         loggedIn = if (enabled) {
-            SyncCredentialStore.loggedIn(platform, SyncSettings.host(context, platform))
+            SyncSettings.userConfirmedLogin(context) ||
+                SyncCredentialStore.loggedIn(platform, SyncSettings.host(context, platform))
         } else {
             false
         }
@@ -2557,7 +2559,8 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                         val probe = SyncEngine.probe(
                             platform, host, SyncCredentialStore.snapshot(platform, host)
                         )
-                        loggedIn = probe.loggedIn
+                        // §70.9：不覆盖 loggedIn —— 用户确认过的登录态
+                        // 不该被一次 Cookie 名猜测推翻。这里只更新诊断。
                         diagnostic = briefDiagnosis(platform, probe.loggedIn, probe.cookieNames)
                     }
                 )
@@ -2610,27 +2613,35 @@ private fun HomeworkSyncSection(context: android.content.Context) {
             onFinished = { snapshot ->
                 showLogin = false
                 val probe = SyncEngine.probe(platform, snapshot.host, snapshot)
-                loggedIn = probe.loggedIn
-                if (probe.loggedIn) {
-                    SyncSettings.setLastLoginAt(context, System.currentTimeMillis())
-                }
+                // §70.9：用户在官方页登录完并主动点「我已完成登录」，就算登录态成立。
+                // 不再用 2022 年抓包里的 Cookie 名硬判，否则「明明登录成功」也永远未登录。
+                // 自动检测的结果仍原样留在诊断里，供定位 Q1（课堂派凭证究竟落在哪）。
+                SyncSettings.setUserConfirmedLogin(context, true)
+                SyncSettings.setLastLoginAt(context, System.currentTimeMillis())
+                loggedIn = true
                 diagnostic = briefDiagnosis(platform, probe.loggedIn, probe.cookieNames)
             }
         )
     }
 }
 
-/** 诊断只留两行：结论 + 需要的认证 Cookie，以及实际读到的 Cookie 名。 */
+/**
+ * 诊断只留两行**技术信息**：自动检测结论 + 实际读到的 Cookie 名。
+ * 不在这里下「已登录 / 未登录」的判断 —— 那个状态由用户确认决定（§70.9）。
+ */
 private fun briefDiagnosis(
     platform: SyncPlatform,
-    loggedIn: Boolean,
+    autoDetected: Boolean,
     cookieNames: List<String>
 ): String = buildString {
-    append(if (loggedIn) "已登录" else "未登录")
-    append(" · 需要 ${platform.authCookieName}\n")
     append(
-        if (cookieNames.isEmpty()) "读到：无 Cookie"
-        else "读到：${cookieNames.joinToString(" / ")}"
+        if (autoDetected) "自动检测：读到 ${platform.authCookieName}"
+        else "自动检测：未读到 ${platform.authCookieName}"
+    )
+    append("\n")
+    append(
+        if (cookieNames.isEmpty()) "本机 Cookie：无"
+        else "本机 Cookie：${cookieNames.joinToString(" / ")}"
     )
 }
 

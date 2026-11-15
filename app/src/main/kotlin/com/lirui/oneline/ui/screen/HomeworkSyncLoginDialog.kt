@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -87,7 +89,13 @@ fun HomeworkSyncLoginDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                // ★ §70.9：上一版改 Box 时漏了这一句，WebView 直接铺到状态栏底下，
+                //   PC 登录页二维码的上半截被系统状态栏截断。网页内容必须从状态栏下方开始。
+                .statusBarsPadding()
+        ) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { context ->
@@ -116,6 +124,7 @@ fun HomeworkSyncLoginDialog(
                         MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
                         RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
                     )
+                    .navigationBarsPadding()
                     .padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)

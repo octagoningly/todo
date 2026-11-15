@@ -5619,3 +5619,55 @@ Cookie 再 `loadUrl(登录页)`，不误伤另一个平台、不碰 App 里的�
 - 四级顺序：复用 `SettingsCard` / `SettingsDropdown` / `SyncRules.parseCookieHeader`；
   官方 `Box` / `AndroidView` / `WebView` / `TextButton`；本轮无新增开源参考；
   手写部分仍是无 Android 依赖的纯函数 + 单测。
+
+---
+
+## §70.9 第三轮反馈：状态栏回归 + 停止猜 Cookie 名（2026-11-15 深夜）
+
+### 70.9.1 二维码被**系统状态栏**截断
+
+不是 App 顶栏的问题：§70.8 把布局从 `Column` 改成 `Box + fillMaxSize()` 时，
+把 §70.7 里的 `statusBarsPadding()` 一起删掉了 —— WebView 直接铺到系统状态栏
+底下，PC 登录页二维码的上半截被状态栏盖住。
+
+**修法**：`Box` 补回 `statusBarsPadding()`（网页内容从状态栏下方开始），
+底部浮层加 `navigationBarsPadding()`（按钮不被手势条压住）。
+★ 教训：**去掉 App 顶栏 ≠ 可以不处理系统 inset**，两者是两回事。
+
+### 70.9.2 ★ 课堂派「登录成功却永远未登录」
+
+连续两轮都读不到 `ketangpai_home_remember`。这个字段来自 2022 年一份抓包，
+课堂派现状显然已经不写它（或换了域 / 换了存储方式）。继续枚举 Cookie 名是死路，
+而且会一直把「明明已经登录」的用户卡在「未登录」。
+
+骨架阶段本来就没有真实接口探测，因此把判定口径改成：
+
+| | 之前 | 现在 |
+| --- | --- | --- |
+| 登录态来源 | 猜中的认证 Cookie 名 | **用户在官方页登录后主动点「我已完成登录」** |
+| 自动检测 | 决定状态 | 降级为诊断信息，不再覆盖状态 |
+| 状态文案 | 「未检测到 xxx」 | 「已登录 / 未登录」 |
+
+- 新增 `SyncSettings.userConfirmedLogin`，点「我已完成登录」时置 true，
+  「清除登录状态」经 `clearStatus()` 一并复位。
+- `briefDiagnosis()` 只输出两行**技术信息**：自动检测是否读到认证 Cookie、
+  本机实际读到的 Cookie 名清单 —— 这份清单就是下一轮定位 Q1 的依据。
+- 「检查同步链路」不再推翻用户确认。
+
+⚠ **这不代表凭证已向平台校验过**。等接入作业抓取，第一次真实接口调用会
+自然暴露凭证是否有效（401 → 提示重新登录）。Q1 仍未通过，只是不再阻塞试用。
+
+### 70.9.3 已知遗留
+
+对话框内「重新登录」只清 Cookie、不复位 `userConfirmedLogin`；若用户重新登录后
+不点「我已完成登录」直接关闭，状态会残留「已登录」。骨架阶段没有实际同步，
+不会造成错误行为；接入抓取时一并收口。
+
+### 70.9.4 验证
+
+- `:app:testDebugUnitTest` **406 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**。
+- `adb install -r` **Success**，仍 1.0.14 / 48，数据保留。
+- `compileSdk` 临时对齐本机 37 后改回 36，`build.gradle.kts` 零 diff。
+- 四级顺序：复用 `SettingsRepo` 风格的独立 pref 与 `SyncRules` 纯函数；
+  官方 `statusBarsPadding` / `navigationBarsPadding` / `WebView`；
+  本轮无新增开源参考；手写部分仍是无 Android 依赖的纯函数 + 单测。

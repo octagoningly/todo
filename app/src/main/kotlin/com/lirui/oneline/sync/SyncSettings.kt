@@ -21,6 +21,7 @@ object SyncSettings {
     private const val KEY_TRIGGER = "trigger_mode"
     private const val KEY_LAST_LOGIN_AT = "last_login_at"
     private const val KEY_LAST_SYNC_AT = "last_sync_at"
+    private const val KEY_USER_CONFIRMED = "user_confirmed_login"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -74,10 +75,26 @@ object SyncSettings {
         prefs(context).edit().putLong(KEY_LAST_SYNC_AT, millis).apply()
     }
 
+    /**
+     * 用户在登录页主动点过「我已完成登录」。
+     *
+     * ★ §70.9：不再用猜出来的 Cookie 名当登录门槛。课堂派现状已不写 2022 年抓包里的
+     *   `ketangpai_home_remember`，硬判会让「明明登录成功」的用户永远显示未登录。
+     *   骨架阶段还没有真实接口探测，因此以**用户确认**为准；
+     *   自动检测结果仍原样留在诊断里，供定位 Q1。清除登录状态时一并复位。
+     */
+    fun userConfirmedLogin(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_USER_CONFIRMED, false)
+
+    fun setUserConfirmedLogin(context: Context, value: Boolean) {
+        prefs(context).edit().putBoolean(KEY_USER_CONFIRMED, value).apply()
+    }
+
     /** 一键停用：只清状态与时间，不碰 WebView Cookie（那由 SyncCredentialStore 负责）。 */
     fun clearStatus(context: Context) {
         prefs(context).edit()
             .putBoolean(KEY_ENABLED, false)
+            .putBoolean(KEY_USER_CONFIRMED, false)
             .remove(KEY_LAST_LOGIN_AT)
             .remove(KEY_LAST_SYNC_AT)
             .apply()
