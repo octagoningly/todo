@@ -5505,15 +5505,17 @@ zuige 澄清：`release/vivo-store` 正在**申请软件著作权**，最好先�
   Cookie 解析、会话判定、登录 URL 与校域名、绝对时间边界、三字段校验、去重键与诊断脱敏）。
 - `:app:compileDebugKotlin` / `:app:compileReleaseKotlin` / `:app:assembleDebug` **BUILD SUCCESSFUL**，
   产出 `app/build/outputs/apk/debug/app-debug.apk` 供登录试验。
-- `:app:assembleRelease` 停在 `validateSigningRelease: Keystore file not set` ——
-  本机没有 `keystore.properties`（签名材料不进仓库），**与代码无关**；
-  正式出包需在配好签名后复跑。
+- `:app:assembleRelease` **BUILD SUCCESSFUL**。签名材料后来补齐到项目内的
+  `keystore.properties` + `app/oneline-release.keystore`（`.gitignore` 第 18/19 行
+  已忽略，不进仓库）；产物签名 SHA-256 `c0847ef1…2548` 与机上 v1.0.14 完全一致，
+  `adb install -r` 覆盖安装 **Success**（2026-11-15 14:48），
+  数据保留、包名不变 —— debug 包签名不同会报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`。
 - ⚠ **SDK 环境说明**：本机 `ANDROID_HOME` 只有 `platforms/android-37.0`，
   项目 `compileSdk = 36` 需要 `platforms/android-36`，AGP 联网拉 manifests 超时
   （官方包 65MB 下载过慢）。验证时把 `compileSdk` **临时**对齐 37 跑完编译与单测，
   **随后已改回 36，`app/build.gradle.kts` 最终零 diff**。
   在补齐 SDK Platform 36 的机器上应按 §6.4 再跑一次完整的
-  `testDebugUnitTest → assembleRelease`。当前 APK 是临时对齐 37 编出的 debug 包，
-  仅用于本人登录试验，**不可用于发版**。
+  `testDebugUnitTest → assembleRelease`。当前 debug / release 两个包都是临时对齐 37
+  编出的，仅供本人登录试验，**不可用于对外发版**。
 - `local.properties` 未写入仓库；`ANDROID_HOME` / `JAVA_HOME` 都只作为进程环境变量传入。
 - 版本号不动、不发版；合规分支零改动。
