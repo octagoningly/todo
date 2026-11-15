@@ -151,6 +151,12 @@ import com.lirui.oneline.data.model.Todo
 import com.lirui.oneline.keepalive.DeviceCompat
 import com.lirui.oneline.keepalive.KeepAlive
 import com.lirui.oneline.reminder.NotificationHelper
+import com.lirui.oneline.sync.SyncCredentialStore
+import com.lirui.oneline.sync.SyncEngine
+import com.lirui.oneline.sync.SyncPlatform
+import com.lirui.oneline.sync.SyncRules
+import com.lirui.oneline.sync.SyncSettings
+import com.lirui.oneline.sync.SyncTrigger
 import com.lirui.oneline.ui.MainViewModel
 import com.lirui.oneline.ui.CIRCLE_FILL_MILLIS
 import com.lirui.oneline.ui.theme.DarkCardStyle
@@ -2229,7 +2235,13 @@ private fun SettingsScreen(
             }
         }
 
-        // ═══ 8. 测试（全页最后）═══
+        // ═══ 8. 作业自动导入（实验分支，默认关闭；见 DESIGN.md 本版小节）═══
+        // 放在「数据」之后、「测试」之前：它是低频的账号类设置，
+        // 不该挤进每天都要看的提醒/外观，但也不该埋在排障项后面。
+        item { SectionHeader("作业自动导入") }
+        item { HomeworkSyncSection(context) }
+
+        // ═══ 9. 测试（全页最后）═══
         item { SectionHeader("测试") }
         item {
             SettingsCard {
@@ -2424,6 +2436,196 @@ private fun ItemDivider() {
         modifier = Modifier.padding(start = 16.dp, end = 16.dp),
         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
     )
+}
+
+/**
+ * 「作业自动导入」设置的整节（实验分支骨架，见 DESIGN.md 本版小节）。
+ *
+ * ★ 总闸默认关闭，关掉时只有一行开关 —— 不读 Cookie、不建 WebView、不发请求。
+ * ★ 这一节**自读自写**独立的 SharedPreferences，不往 MainActivity 的
+ *   key(settingsEpoch) 状态链里加参数：草稿期改动面越小越好，也不会影响备份恢复。
+ * ★ 当前只做「登录能不能成」这一件事：作业抓取、落库、排提醒尚未接入，
+ *   「手动同步一次」会明确告诉用户链路状态，不做点了没反应的假按钮。
+ */
+@Composable
+private fun HomeworkSyncSection(context: android.content.Context) {
+    var enabled by remember { mutableStateOf(SyncSettings.enabled(context)) }
+    var platform by remember { mutableStateOf(SyncSettings.platform(context)) }
+    var trigger by remember { mutableStateOf(SyncSettings.triggerMode(context)) }
+    var hostDraft by remember { mutableStateOf(SyncSettings.customHost(context)) }
+    var showLogin by remember { mutableStateOf(false) }
+    var loggedIn by remember { mutableStateOf(false) }
+    var diagnostic by remember { mutableStateOf<String?>(null) }
+
+    // 进入本节 / 换平台时刷一次会话状态。只读 Cookie 名字，永远不取值。
+    LaunchedEffect(enabled, platform, hostDraft) {
+        loggedIn = if (enabled) {
+            SyncCredentialStore.loggedIn(platform, SyncSettings.host(context, platform))
+        } else {
+            false
+        }
+    }
+
+    SettingsCard {
+        ToggleItem(
+            label = "自动导入作业",
+            sub = "默认关闭。开启后在平台官方页登录，把作业与截止时间写成待办",
+            checked = enabled,
+            onChecked = { on ->
+                enabled = on
+                SyncSettings.setEnabled(context, on)
+                if (!on) diagnostic = null
+            }
+        )
+
+        AnimatedVisibility(
+            visible = enabled,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut()
+        ) {
+            Column {
+                ItemDivider()
+                SettingsDropdown(
+                    label = "第三方平台",
+                    options = SyncPlatform.values().mapIndexed { index, p -> index to p.label },
+                    selectedValue = platform.ordinal,
+                    onSelect = { index ->
+                        val next = SyncPlatform.values()[index]
+                        platform = next
+                        SyncSettings.setPlatform(context, next)
+                        // 换平台就把学校域名留空，别把上一家的子域带到这一家。
+                        hostDraft = ""
+                        SyncSettings.setCustomHost(context, "")
+                        diagnostic = null
+                    }
+                )
+                ItemDivider()
+                OutlinedTextField(
+                    value = hostDraft,
+                    onValueChange = {
+                        hostDraft = it
+                        SyncSettings.setCustomHost(context, it)
+                    },
+                    label = { Text("学校域名（可留空；直接粘整条网址也行）") },
+                    placeholder = { Text(platform.defaultHost) },
+                    supportingText = {
+                        Text("实际登录：" + SyncRules.loginUrl(platform, SyncSettings.host(context, platform)))
+                    },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+                ItemDivider()
+                SettingsDropdown(
+                    label = "同步时机",
+                    options = SyncTrigger.OPTIONS,
+                    selectedValue = trigger,
+                    onSelect = { mode ->
+                        trigger = mode
+                        SyncSettings.setTriggerMode(context, mode)
+                    }
+                )
+                ItemDivider()
+                ListItem(
+                    headlineContent = { Text("登录${platform.label}") },
+                    supportingContent = {
+                        Text(if (loggedIn) "已检测到会话凭证" else "未登录 / 会话可能已过期")
+                    },
+                    trailingContent = {
+                        Text(
+                            if (loggedIn) "重新登录" else "登录",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    modifier = Modifier.clickable { showLogin = true }
+                )
+                ItemDivider()
+                ListItem(
+                    headlineContent = { Text("手动同步一次") },
+                    supportingContent = { Text(SyncEngine.NOT_IMPLEMENTED_HINT) },
+                    trailingContent = {
+                        Text(
+                            "同步",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    modifier = Modifier.clickable {
+                        Toast.makeText(
+                            context,
+                            "先验证登录：作业抓取与落库将在登录通过后接入",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                )
+                ItemDivider()
+                ListItem(
+                    headlineContent = { Text("清除登录状态") },
+                    supportingContent = { Text("清掉本机浏览器会话，并关闭本功能") },
+                    trailingContent = {
+                        Text(
+                            "清除",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    modifier = Modifier.clickable {
+                        SyncCredentialStore.clear(context)
+                        enabled = false
+                        loggedIn = false
+                        diagnostic = "已清除登录状态并关闭本功能"
+                    }
+                )
+                diagnostic?.let { message ->
+                    ItemDivider()
+                    Text(
+                        message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+                    )
+                }
+                Text(
+                    "账号密码只在平台官方页面输入，App 不接触、不上传；" +
+                        "会话凭证保存在本机浏览器会话里。本功能为实验性，随时可关闭。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                )
+            }
+        }
+    }
+
+    if (showLogin) {
+        HomeworkSyncLoginDialog(
+            platform = platform,
+            host = SyncSettings.host(context, platform),
+            onDismiss = { showLogin = false },
+            onFinished = { snapshot ->
+                showLogin = false
+                val probe = SyncEngine.probe(platform, snapshot.host, snapshot)
+                loggedIn = probe.loggedIn
+                if (probe.loggedIn) {
+                    SyncSettings.setLastLoginAt(context, System.currentTimeMillis())
+                }
+                diagnostic = buildString {
+                    append(if (probe.loggedIn) "登录成功：" else "未检测到会话凭证：")
+                    append(
+                        if (probe.cookieNames.isEmpty()) "没有读到任何 Cookie"
+                        else "读到 Cookie ${probe.cookieNames.joinToString(" / ")}"
+                    )
+                    if (!probe.loggedIn) {
+                        append("。请在页面里完成登录后再点「我已完成登录」")
+                    }
+                }
+            }
+        )
+    }
 }
 
 /** 标题模板最多 24 个 code point —— 一个 emoji 约 1.2 个汉字宽，再多会把事件名挤没。 */

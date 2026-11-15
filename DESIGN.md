@@ -5421,3 +5421,99 @@ zuige 澄清：`release/vivo-store` 正在**申请软件著作权**，最好先�
 - `:app:testDebugUnitTest` **398 条 / 0 失败** → `:app:assembleRelease` `BUILD SUCCESSFUL`。
   `FabPositionTest` 从 5 条增至 7 条（右下角吸附区边界 + 负半径不放大吸附区）。
 - 版本号不动、不发版；Manifest 零改动；合规分支零改动。
+
+---
+
+## §70 作业自动导入：链路骨架与登录探针（2026-11-15，功能分支）
+
+**分支**：`新增自动导入雨课堂和课堂派作业功能`（从 `main` 切出）。
+**需求（zuige）**：设置里加一个入口，**默认关闭**；开启后下拉选择第三方平台并做相关设置，
+点开后在浏览器里登录，App 记住会话，定时/打开 App/手动同步作业，
+自动写成「复变函数第 x 次作业 + 截止时间」这样的待办。
+本轮明确要求「**先把大概链路写好，然后我试试能不能登录**」。
+
+### 70.1 四级顺序结论（AGENTS.md §2）
+
+1. **复用旧模块**：`SettingsCard` / `ItemDivider` / `SettingsDropdown` / `ToggleItem` /
+   `SectionHeader` 全套照搬设置页现成组件；`ui/theme/Tokens.kt` 的 `cardBackground` 由
+   `SettingsCard` 间接吃到；单测沿用 `ParserTest` 那套纯 JVM 写法。
+   `parser/Parser.kt` 本轮**不适用** —— 平台给的是结构化时间戳，不需要自然语言解析。
+2. **官方库**：`WebView` + `CookieManager`（官方 API，本轮即第 2 级）、
+   M3 `ExposedDropdownMenuBox` / `OutlinedTextField` / `Dialog`；**不引任何新依赖**
+   （`build.gradle.kts` 无 OkHttp，也不引 security-crypto）。
+3. **开源参考**：`sqyCoder/tuoyixia`（Android / MIT，WebView 登录 → Cookie 复用）验证了
+   链路可行性；其 `endAt = now + 剩余分钟` 会漂移、单课异常静默跳过会覆盖旧数据，
+   **两点都不照抄**。2026 年仍活跃的雨课堂油猴脚本已不抽 Cookie、改在页面上下文里
+   做 DOM 操作，反过来支持「页面内 fetch」路线。
+4. **手写**：`sync/SyncRules.kt` 的判定/归一化/校验全部抽成无 Android 依赖的纯函数，
+   补 `SyncRulesTest`，理由记在本节 —— 符合第 4 级的三条要求。
+
+### 70.2 本轮做了什么 / 没做什么
+
+| 已做 | 未做（等登录验证） |
+| --- | --- |
+| `sync/SyncContract.kt` 平台枚举、作业契约、触发档位 | 作业抓取与 JSON 字段映射 |
+| `sync/SyncRules.kt` 域名归一化、Cookie 解析、会话判定、去重键、绝对时间校验 | Room v8→v9 加列与迁移链 |
+| `sync/SyncSettings.kt` 独立 pref、总闸默认 false | 落库、`ReminderScheduler.scheduleBlocking()` 排提醒 |
+| `sync/SyncCredentialStore.kt` 读/清 WebView 会话 | WorkManager 定时唤醒 |
+| `sync/SyncEngine.kt` 登录探针（不发请求） | 多校 `uv_id` / 接口字段适配 |
+| `ui/screen/HomeworkSyncLoginDialog.kt` 官方页登录对话框 | 纯后台无头同步 |
+| 设置页第 8 节「作业自动导入」 | 隐私政策正文、发版 |
+
+### 70.3 三条关键决策
+
+- **不接触账号密码、不把 Cookie 落进 SharedPreferences**。账号密码由用户在平台官方页输入；
+  Cookie 由 WebView 自己持久化在 `app_webview/`（`allowBackup=false`），
+  只在用户点「我已完成登录」时读一次快照，诊断只输出 Cookie **名字**、绝不输出值。
+  下一轮接抓取走「页面内注入 fetch」：同源请求自动带凭证，绕开 HttpOnly / token 解析 / CORS，
+  也更像「用户在官方页面自己操作」。
+- **不动 Room**。要存外部作业 ID 才会触发 v8→v9 迁移（显式 DEFAULT + hasColumn 幂等 +
+  `MigrationTestHelper` 链 + `BackupRules.DB_VERSION` + schema json + 备份兼容）。
+  接口字段还没确证就动 schema，是本末倒置。
+- **默认关闭 + 独立 pref**。总闸关掉时整节只显示一行开关，不建 WebView、不读 Cookie、
+  不发请求；设置放独立 `oneline_homework_sync`，不跟着 `BackupCodec` 导出（学校域名属于就读信息）。
+  「手动同步一次」明确提示链路状态，不做点了没反应的假按钮。
+
+### 70.4 平台侧已核实与待验证
+
+- 课堂派：2022 年 Fiddler 抓包显示 `openapiv5(x).ketangpai.com//UserApi/login` 响应体
+  `data.token`，响应头 `ketangpai_home_remember` 内含 token（**Max-Age=10800**）、
+  `PHPSESSID`；CORS 放行 `www.ketangpai.com`。作业接口 `FutureV2/CourseMeans/getCourseContent`
+  回 `title` / `endtime`（Unix 秒）/ `coursename`。凭证可能 3 小时过期，需续期设计。
+- 雨课堂：`www.yuketang.cn/web?type=3` 同时有账号登录 / 扫码 / 微信快捷登录；
+  社区脚本用 `sessionid` + `csrftoken` Cookie，`user-courses` 回 `course_name`、
+  `course/chapter` 的 `leaf_type=6` 回 `name` 与 `id`。
+  **绝对截止时间字段在开源生态里仍未找到公开证据** —— 这是下一轮探针的通过标准。
+- 三道待验证是非题：① WebView 登录后课堂派凭证能否稳定取得并刷新；
+  ② 雨课堂登录后作业接口能否拿到**绝对**时间（只有「剩余 X 小时」判不通过）；
+  ③ 科目 / 标题 / 绝对时间三字段在 ≥2 门课、≥2 次拉取、换 1 个校子域时是否稳定。
+
+### 70.5 分支与合规边界
+
+- 功能**只落本功能分支**，不动 `main`，也不动 `release/vivo-store`。
+  后者不申请任何网络权限且处于软著申请冻结期，按 `AGENTS.md §4` 不改、不 cherry-pick、
+  不补功能、不发版 —— **这是永久功能分叉，不记作欠账**。
+- `AndroidManifest.xml` 只补注释（不新增权限），写明 WebView 登录复用 `INTERNET`
+  及「合规分支一律不得带入」。
+- 雨课堂《用户协议》明文禁止未经授权访问、抓取、绕过技术限制与账号信息共享；
+  功能定型前需单独评估合规与商店审核，本轮仅为本人账号的本机试验。
+- 版本号不动、不发版，不碰 Release / Hexo / 博客文章 / `latest.json`。
+
+### 70.6 验证
+
+- `:app:testDebugUnitTest` **406 条 / 0 失败**（新增 `SyncRulesTest` 8 条：域名归一化、
+  Cookie 解析、会话判定、登录 URL 与校域名、绝对时间边界、三字段校验、去重键与诊断脱敏）。
+- `:app:compileDebugKotlin` / `:app:compileReleaseKotlin` / `:app:assembleDebug` **BUILD SUCCESSFUL**，
+  产出 `app/build/outputs/apk/debug/app-debug.apk` 供登录试验。
+- `:app:assembleRelease` 停在 `validateSigningRelease: Keystore file not set` ——
+  本机没有 `keystore.properties`（签名材料不进仓库），**与代码无关**；
+  正式出包需在配好签名后复跑。
+- ⚠ **SDK 环境说明**：本机 `ANDROID_HOME` 只有 `platforms/android-37.0`，
+  项目 `compileSdk = 36` 需要 `platforms/android-36`，AGP 联网拉 manifests 超时
+  （官方包 65MB 下载过慢）。验证时把 `compileSdk` **临时**对齐 37 跑完编译与单测，
+  **随后已改回 36，`app/build.gradle.kts` 最终零 diff**。
+  在补齐 SDK Platform 36 的机器上应按 §6.4 再跑一次完整的
+  `testDebugUnitTest → assembleRelease`。当前 APK 是临时对齐 37 编出的 debug 包，
+  仅用于本人登录试验，**不可用于发版**。
+- `local.properties` 未写入仓库；`ANDROID_HOME` / `JAVA_HOME` 都只作为进程环境变量传入。
+- 版本号不动、不发版；合规分支零改动。
