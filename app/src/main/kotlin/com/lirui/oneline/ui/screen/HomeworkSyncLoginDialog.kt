@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,11 +28,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.lirui.oneline.sync.CookieSnapshot
+import com.lirui.oneline.sync.ProbeRunner
 import com.lirui.oneline.sync.SyncCredentialStore
 import com.lirui.oneline.sync.SyncPlatform
 import com.lirui.oneline.sync.SyncRules
@@ -76,8 +79,11 @@ fun HomeworkSyncLoginDialog(
     platform: SyncPlatform,
     host: String,
     onDismiss: () -> Unit,
-    onFinished: (CookieSnapshot) -> Unit
+    onFinished: (CookieSnapshot) -> Unit,
+    /** 抓取探针完成后回传摘要；设置页显示一行，原始响应已由 ProbeRunner 落本机文件。 */
+    onProbeResult: (String) -> Unit = {}
 ) {
+    val appContext = LocalContext.current.applicationContext
     val url = remember(platform, host) { SyncRules.loginUrl(platform, host) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
@@ -155,7 +161,16 @@ fun HomeworkSyncLoginDialog(
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 TextButton(onClick = onDismiss) { Text("关闭") }
-                TextButton(onClick = { relogin() }) { Text("重新登录") }
+                TextButton(onClick = { relogin() }) { Text("重登") }
+                TextButton(onClick = {
+                    val web = webViewRef ?: return@TextButton
+                    Toast.makeText(appContext, "正在抓取，完成后自动返回", Toast.LENGTH_SHORT).show()
+                    // §70.11：用当前已登录会话调候选接口，只做读取、不提交任何数据。
+                    ProbeRunner.run(appContext, platform, host, web) { result ->
+                        onProbeResult(result)
+                        onDismiss()
+                    }
+                }) { Text("抓作业") }
                 Spacer(modifier = Modifier.weight(1f))
                 Button(onClick = {
                     onFinished(SyncCredentialStore.snapshot(platform, host))

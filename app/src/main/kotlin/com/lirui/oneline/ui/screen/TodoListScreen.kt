@@ -2624,7 +2624,9 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                 SyncSettings.setLastLoginAt(context, System.currentTimeMillis())
                 loggedIn = true
                 diagnostic = briefDiagnosis(true, probe.cookieNames)
-            }
+            },
+            // §70.11：抓取探针结果只回一行摘要，原始响应由 ProbeRunner 落本机文件。
+            onProbeResult = { result -> diagnostic = result }
         )
     }
 }

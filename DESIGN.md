@@ -5719,3 +5719,64 @@ Cookie 再 `loadUrl(登录页)`，不误伤另一个平台、不碰 App 里的�
 - 四级顺序：复用 `SyncRules` 纯函数与现有设置组件；官方 `WebViewClient` /
   `evaluateJavascript` / `statusBarsPadding`；本轮无新增开源参考；
   手写部分仍是无 Android 依赖的纯函数 + 单测。
+
+---
+
+## §71 抓取探路：登录里程碑 + 页面内 fetch 探针（2026-11-15 深夜）
+
+### 71.1 里程碑
+
+登录链路（含 WebView 布局、状态栏 inset、登录态确认）到此可用，
+打本地 tag **`雨课堂和课堂派登录成功`** → `485e1ad`。不发版、不动 `main`、
+不动合规分支，不写 `latest.json` / Release / 博客。
+
+### 71.2 为什么不直接写抓取
+
+课程列表、作业/考试节点、尤其**绝对截止时间字段**都还没在真实响应里见过。
+课堂派 `ketangpai_home_remember` 已证实过时，说明 2022 年抓包不能当契约；
+雨课堂的 `endtime` 在开源生态里至今没有公开证据。
+直接照抄接口写映射，很可能把错的时间写进待办（还可能触发 Room v8→v9）。
+所以先做**只读探针**：用用户已登录的页面会话调候选接口，把原始响应带回来。
+
+### 71.3 探针设计
+
+| 件 | 作用 |
+| --- | --- |
+| `sync/ProbeJs.kt` | 纯 Kotlin 生成 JS；结果写 `window.__oneline_probe`，统计关键词并生成一行摘要 |
+| `sync/ProbeRunner.kt` | `evaluateJavascript` 启动 + 主线程轮询取回（最多 12s），原始 JSON 写 `getExternalFilesDir()/oneline-probe.json`（零权限） |
+| 登录页「抓作业」按钮 | 在**当前会话**里触发，完成后自动返回设置页显示摘要 |
+| `ProbeJsTest` | 把接口路径 / 关键词表 / 占位符替换钉进单测 |
+
+**候选接口**（按平台分支，逐个试、记录 HTTP 状态与响应片段）：
+
+- 课堂派：`CourseApi/semesterList` → `CourseApi/semesterCourseList` →
+  `FutureV2/CourseMeans/getCourseContent`（`contenttype=4` 作业 / `6` 考试）。
+  API host 依次试 `openapiv5` / `52` / `53`；`token` 头优先从 `localStorage` 找，
+  找不到如实记 `tokenFound=false`。
+- 雨课堂：`mooc-api/v1/lms/user/user-courses/` →
+  `learn/course/chapter?cid=…&sign=…`（`leaf_type=6` 作业）→ `leaf_info`，
+  另试 `user-tasks` / `exercise/list` 两个可能的聚合入口。同源，`credentials:'include'` 自动带 Cookie。
+
+**关键词表**：`homework / test / exam / quiz / deadline / endtime / end_time /
+due_at / due / 作业 / 考试 / 测验 / 截止 / course_name / coursename /
+classroom_id / courseid / title / mstatus / submit_state`。
+命中数直接回答「作业/考试在哪、有没有绝对截止时间」。
+
+### 71.4 边界
+
+- 探针**只发 GET/POST 读取**，不提交、不修改任何平台数据；不注入表单操作。
+- 不落库、不动 Room、不动提醒排期；结果文件只在本机，可用 `adb pull` 取回分析。
+- 设置页只显示一行摘要（诊断区仍有「×」），不糊用户一屏文字。
+- 这一步答完 Q1 / Q2 之后，才决定是否做字段映射 → Room v8→v9 →
+  `TodoRepository.addFromParsed` → `ReminderScheduler.scheduleBlocking()`。
+
+### 71.5 验证
+
+- `:app:testDebugUnitTest` **409 条 / 0 失败**（新增 `ProbeJsTest` 3 条）；
+  `:app:assembleRelease` **BUILD SUCCESSFUL**；
+  `adb install -r` **Success**（2026-11-15 23:56:34），仍是 1.0.14 / 48，数据保留。
+- `compileSdk` 临时对齐本机 37 后改回 36，`build.gradle.kts` 零 diff。
+- 四级顺序：复用 `SyncPlatform` / `SyncRules` 与设置页组件；
+  官方 `WebView.evaluateJavascript` / `Handler` / `getExternalFilesDir`；
+  开源参考为 `Axope/ketangpai`、`WolfIsMyName/yuketangHelper`（只借接口路径，不引依赖）；
+  手写部分抽成无 Android 依赖的 `ProbeJs` + `ProbeJsTest`。
