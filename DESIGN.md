@@ -5832,3 +5832,63 @@ firstCourse: {id:null,...}
 - 四级顺序：复用 `ProbeJs` / `ProbeRunner`；官方 `fetch` 请求头与
   `getExternalFilesDir`；开源参考仍是 `homeworkHelper.py` 的请求头（只借参数不引依赖）；
   手写部分仍是无 Android 依赖的 JS 生成 + 单测。
+
+---
+
+## §73 第二次探针回收：雨课堂打通，课堂派需换路线（2026-11-16 00:21）
+
+### 73.1 雨课堂（Q2 接近通过）
+
+`adb pull` 回 `oneline-probe-yuketang.json`（3400 B），`xtbz` 修复生效：
+
+| 接口 | 结果 |
+| --- | --- |
+| `user-courses` | **200**，2 门课；字段 `course_name` / `classroom_id` / `course_sign` / `class_start` / `class_end`（毫秒） |
+| `course/chapter?cid&sign` | **200**，6229 B 章节树；节点含 `name` / `leaf_type` / `id` / `start_time` / **`end_time`** / **`score_deadline`** / `leafinfo_id` |
+| `leaf_info` / `user-tasks` / `exercise/list` | 全 404 —— 聚合入口不存在，**章节树是唯一数据源** |
+
+关键词统计（对完整响应文本）：`end_time` × 17、`score_deadline`×17、
+`course_name` × 3、`classroom_id` × 2。
+
+★ **Q2 的答案已经很近**：绝对截止时间字段 `end_time` / `score_deadline`
+确实存在（不是相对「剩余 X 小时」）。但探针只存了每个响应的前 800 字，
+前两个节点都是 `leaf_type=8`（课件）且 `end_time=0`，作业节点在后面被截掉，
+**值是否非零还看不到**。
+
+### 73.2 课堂派（Q1 未通过，跨域路线不通）
+
+`oneline-probe-ketangpai.json`（738 B）：三个 API host
+（`openapiv5` / `52` / `53`）全部 `ERR:TypeError: Failed to fetch`，`tokenFound=false`。
+
+根因判断：从 `www.ketangpai.com` 跨域 fetch 到 `openapiv5*`，带 `token`
+自定义头 + `application/json` → 触发 CORS 预检，服务端不放行；
+页面 localStorage / sessionStorage 里也没有 token。
+**页面内跨域 fetch 对课堂派走不通**，需要换路线。
+
+### 73.3 v2 探针升级（本轮）
+
+| 改动 | 目的 |
+| --- | --- |
+| `sample` 800 → **12000 字** | 完整章节树不再被截断 |
+| 雨课堂 JS 内解析章节树 | 输出 `nodes` / `leafTypeCounts` / `withDeadline`，摘要直接给「节点 N 个 / leaf_type 分布 / 有绝对截止 X 个 / 示例」 |
+| 课堂派补候选请求 | 同源主站 `/CourseApi/*`、无自定义头 `text/plain` 简单请求、旧 `v4` 域（早期纯 Cookie 鉴权）、原三域；每条记失败原因 |
+| 凭证诊断 | 记录 localStorage / sessionStorage / document.cookie 的**键名**，只记名不记值 |
+| 单测 | 补 `12000` / `leafTypeCounts` / `main-semesterList` / `api-simple` / `v4-semesterList` 等断言 |
+
+### 73.4 待办与边界
+
+- 用户两个平台各再点一次「抓作业」→ 取回完整响应：
+  - 雨课堂：`withDeadline` > 0 即 Q2 通过，可以直接定字段映射
+    （`course_name` + 节点 `name` + `end_time` 毫秒）。
+  - 课堂派：看同源 / 简单请求 / v4 哪条能通，再决定是否改走
+    **Kotlin 侧原生 HTTP**（`HttpURLConnection`，不受 CORS 限制，Cookie 由
+    `CookieManager` 提供）。
+- 仍**不落库、不动 Room、不排提醒**；探针只读、不改平台数据。
+
+### 73.5 验证
+
+- `:app:testDebugUnitTest` **409 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**；
+  `adb install -r` **Success**（2026-11-16 00:29:04），仍是 1.0.14 / 48，数据保留。
+- `compileSdk` 临时对齐本机 37 后改回 36，`build.gradle.kts` 零 diff。
+- 四级顺序：复用 `ProbeJs` / `ProbeRunner`；官方 `fetch` 与 `getExternalFilesDir`；
+  开源参考仍只借接口参数；手写部分仍是无 Android 依赖的 JS 生成 + 单测。

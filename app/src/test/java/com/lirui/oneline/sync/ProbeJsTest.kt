@@ -19,6 +19,11 @@ class ProbeJsTest {
         assertTrue(js.contains("contenttype:4"))
         assertTrue(js.contains("contenttype:6"))
         assertTrue(js.contains("'ketangpai'"))
+        // §73：跨域带 token 头会 CORS 预检失败，必须留同源/简化/v4 候选。
+        assertTrue(js.contains("main-semesterList"))
+        assertTrue(js.contains("api-simple"))
+        assertTrue(js.contains("v4-semesterList"))
+        assertTrue(js.contains("credentials"))
     }
 
     @Test
@@ -33,6 +38,10 @@ class ProbeJsTest {
         assertTrue(js.contains("xtbz"))
         assertTrue(js.contains("'cloud'"))
         assertTrue(js.contains("x-csrftoken"))
+        // §73：章节树必须在 JS 里解析出 leaf_type 分布与绝对截止时间节点数。
+        assertTrue(js.contains("leafTypeCounts"))
+        assertTrue(js.contains("withDeadline"))
+        assertTrue(js.contains("section_leaf_list"))
     }
 
     @Test
@@ -43,6 +52,8 @@ class ProbeJsTest {
         assertTrue(js.contains("deadline"))
         assertTrue(js.contains("homework"))
         assertTrue(js.contains("'done'"))
+        // §73：完整响应不再被 800 字截断。
+        assertTrue(js.contains("12000"))
         // 占位符必须全部替换掉，否则页面里跑起来是坏 JS。
         assertFalse(js.contains("__PLATFORM__"))
         assertFalse(js.contains("__HOST__"))
