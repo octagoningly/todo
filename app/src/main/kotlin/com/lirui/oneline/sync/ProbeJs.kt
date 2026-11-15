@@ -121,8 +121,19 @@ object ProbeJs {
      */
     private const val YUKETANG = """
   var base=location.origin;
+  // ★ §72：首次探针三个接口都回 {"msg":"XTBZ IS REQUIRED"} —— 缺 xtbz 头。
+  //   开源脚本 homeworkHelper.py 的请求头里明确写了 xtbz:'cloud'，
+  //   另外补上 csrftoken / university-id（能从 Cookie 读到就带）。
+  var H={'xtbz':'cloud'};
+  try{
+    var m=document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+    if(m) H['x-csrftoken']=m[1];
+    var m2=document.cookie.match(/(?:^|;\s*)university_id=([^;]+)/);
+    if(m2) H['university-id']=m2[1];
+  }catch(e){}
+  P.probeHeaders=Object.keys(H);
   (async function(){
-    var r=await req('courses',base+'/mooc-api/v1/lms/user/user-courses/?status=1&page=1&no_page=1&term=latest');
+    var r=await req('courses',base+'/mooc-api/v1/lms/user/user-courses/?status=1&page=1&no_page=1&term=latest',{headers:H});
     var cid=null, sign=null, cname=null;
     try{ var j=JSON.parse(r.t); var l=(j.data&&j.data.product_list)||[];
          if(l.length){ cid=l[0].classroom_id; sign=l[0].course_sign; cname=l[0].course_name; }
@@ -131,11 +142,11 @@ object ProbeJs {
     if(cid){
       var u=base+'/mooc-api/v1/lms/learn/course/chapter?cid='+cid+'&term=latest';
       if(sign) u+='&sign='+encodeURIComponent(sign);
-      await req('chapter',u);
-      await req('leafInfo',base+'/mooc-api/v1/lms/learn/leaf_info/'+cid+'/?term=latest');
+      await req('chapter',u,{headers:H});
+      await req('leafInfo',base+'/mooc-api/v1/lms/learn/leaf_info/'+cid+'/?term=latest',{headers:H});
     }
-    await req('userTasks',base+'/mooc-api/v1/lms/user/user-tasks/?term=latest');
-    await req('exerciseList',base+'/mooc-api/v1/lms/exercise/list/?term=latest');
+    await req('userTasks',base+'/mooc-api/v1/lms/user/user-tasks/?term=latest',{headers:H});
+    await req('exerciseList',base+'/mooc-api/v1/lms/exercise/list/?term=latest',{headers:H});
     finish();
   })().catch(function(e){ P.error=String(e); finish(); });
 """

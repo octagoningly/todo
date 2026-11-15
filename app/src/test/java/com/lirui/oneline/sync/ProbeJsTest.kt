@@ -29,6 +29,10 @@ class ProbeJsTest {
         assertTrue(js.contains("user-tasks"))
         assertTrue(js.contains("exercise/list"))
         assertTrue(js.contains("'yuketang'"))
+        // §72 回归：缺这个头，接口一律回 XTBZ IS REQUIRED。
+        assertTrue(js.contains("xtbz"))
+        assertTrue(js.contains("'cloud'"))
+        assertTrue(js.contains("x-csrftoken"))
     }
 
     @Test

@@ -5780,3 +5780,55 @@ classroom_id / courseid / title / mstatus / submit_state`。
   官方 `WebView.evaluateJavascript` / `Handler` / `getExternalFilesDir`；
   开源参考为 `Axope/ketangpai`、`WolfIsMyName/yuketangHelper`（只借接口路径，不引依赖）；
   手写部分抽成无 Android 依赖的 `ProbeJs` + `ProbeJsTest`。
+
+---
+
+## §72 首次探针回收：两个真问题（2026-11-16 00:04）
+
+### 72.1 `adb pull` 回来的真实结果
+
+用户在课堂派、雨课堂各点了一次「抓作业」。设备上只有一个
+`oneline-probe.json`（1032 B），`platform=yuketang`：
+
+```
+courses      200  {"msg":"XTBZ IS REQUIRED","error_code":40000,...,"success":false}
+userTasks    200  同上
+exerciseList 200  同上
+keywords: {}（无命中）
+firstCourse: {id:null,...}
+```
+
+**两条结论**：
+
+1. **接口路径是对的** —— 返回 200 + 业务错误，不是 404。缺的是 `xtbz` 请求头。
+   开源脚本 `homeworkHelper.py` 的 headers 里明确写着 `xtbz: cloud`
+   （还有 `x-csrftoken` / `university-id`），我写探针时漏了。
+   加上之后 `user-courses` 才有机会返回真实课程列表。
+2. **课堂派的结果被覆盖了** —— 两个平台都写同一个 `oneline-probe.json`，
+   后点的雨课堂把先点的课堂派冲掉。
+
+### 72.2 修复
+
+| 问题 | 修法 |
+| --- | --- |
+| 雨课堂全部 `XTBZ IS REQUIRED` | 所有 `mooc-api` 请求带 `H = {'xtbz':'cloud'}`，并从 Cookie 补 `x-csrftoken` / `university-id`（读得到才加）；`P.probeHeaders` 记录实际带的头便于复核 |
+| 结果互相覆盖 | `ProbeRunner.probeFile(context, platform)` 改成 `oneline-probe-<platform>.json`；摘要里显示实际文件名 |
+| 回归保护 | `ProbeJsTest` 增断言：`xtbz` / `'cloud'` / `x-csrftoken` 必须在雨课堂 JS 里 |
+
+★ 后续写正式抓取层时，`xtbz: cloud` 是**雨课堂的必需头**，别再漏。
+
+### 72.3 下一步（等用户重跑）
+
+两个平台各再点一次「抓作业」→ 目录里会有
+`oneline-probe-ketangpai.json` 与 `oneline-probe-yuketang.json` →
+`adb pull` 取回后看：课程列表能否解析、作业/考试节点在哪、
+**有没有绝对截止时间字段**。答完 Q1 / Q2 才动字段映射与 Room。
+
+### 72.4 验证
+
+- `:app:testDebugUnitTest` **409 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**；
+  `adb install -r` **Success**（2026-11-16 00:09:11），仍是 1.0.14 / 48，数据保留。
+- `compileSdk` 临时对齐本机 37 后改回 36，`build.gradle.kts` 零 diff。
+- 四级顺序：复用 `ProbeJs` / `ProbeRunner`；官方 `fetch` 请求头与
+  `getExternalFilesDir`；开源参考仍是 `homeworkHelper.py` 的请求头（只借参数不引依赖）；
+  手写部分仍是无 Android 依赖的 JS 生成 + 单测。

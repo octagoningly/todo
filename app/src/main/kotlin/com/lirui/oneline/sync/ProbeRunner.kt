@@ -21,14 +21,21 @@ object ProbeRunner {
 
     private const val MAX_POLLS = 24
     private const val POLL_MS = 500L
-    private const val PROBE_FILE = "oneline-probe.json"
 
     private const val READ_JS =
         "(function(){try{return JSON.stringify(window.__oneline_probe||{state:'none'})}" +
             "catch(e){return JSON.stringify({state:'error',error:String(e)})}})()"
 
-    fun probeFile(context: Context): File =
-        File(context.getExternalFilesDir(null) ?: context.filesDir, PROBE_FILE)
+    /**
+     * ★ §72：按平台分文件。上一版两个平台都写 `oneline-probe.json`，
+     *   用户在课堂派、雨课堂各点一次后，后一次把前一次**覆盖掉了**，
+     *   只拿得到雨课堂的结果。
+     */
+    fun probeFile(context: Context, platform: SyncPlatform): File =
+        File(
+            context.getExternalFilesDir(null) ?: context.filesDir,
+            "oneline-probe-${platform.id}.json"
+        )
 
     fun run(
         context: Context,
@@ -51,16 +58,15 @@ object ProbeRunner {
                     val count = obj?.optJSONArray("results")?.length() ?: 0
                     val summary = obj?.optString("summary")?.takeIf { it.isNotBlank() }
                         ?: "探针结束，未拿到摘要"
-                    val saved = runCatching {
-                        probeFile(context).writeText(raw)
-                    }.isSuccess
+                    val file = probeFile(context, platform)
+                    val saved = runCatching { file.writeText(raw) }.isSuccess
                     onResult(
                         buildString {
                             append(if (state == "done") "抓取探针：完成" else "抓取探针：超时")
                             append("（$count 个接口响应）\n")
                             append(summary)
                             append("\n原始响应：")
-                            append(if (saved) "已存到本机 $PROBE_FILE" else "写文件失败")
+                            append(if (saved) "已存到本机 ${file.name}" else "写文件失败")
                         }
                     )
                 } else {
