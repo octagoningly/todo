@@ -51,16 +51,29 @@ class SyncRulesTest {
     }
 
     @Test
-    fun `hasSession depends on the platform specific cookie`() {
-        val ktp = mapOf("PHPSESSID" to "abc", "ketangpai_home_slb" to "x")
-        assertTrue(SyncRules.hasSession(SyncPlatform.KETANGPAI, ktp))
-        assertFalse(SyncRules.hasSession(SyncPlatform.YUKETANG, ktp))
+    fun `hasSession requires the auth cookie and rejects anonymous cookies`() {
+        assertTrue(
+            SyncRules.hasSession(
+                SyncPlatform.KETANGPAI,
+                mapOf("ketangpai_home_remember" to "t")
+            )
+        )
+        assertTrue(SyncRules.hasSession(SyncPlatform.YUKETANG, mapOf("sessionid" to "s")))
 
-        val ykt = mapOf("sessionid" to "s", "csrftoken" to "c")
-        assertTrue(SyncRules.hasSession(SyncPlatform.YUKETANG, ykt))
-        assertFalse(SyncRules.hasSession(SyncPlatform.KETANGPAI, ykt))
-        // 空值不算登录成功。
+        // §70.7 回归：这两个是光打开登录页就会下发的匿名 Cookie，
+        // 拿它们当登录凭证会误报「已检测到会话凭证」。
+        assertFalse(SyncRules.hasSession(SyncPlatform.YUKETANG, mapOf("csrftoken" to "c")))
+        assertFalse(SyncRules.hasSession(SyncPlatform.KETANGPAI, mapOf("PHPSESSID" to "abc")))
+        assertFalse(
+            SyncRules.hasSession(
+                SyncPlatform.KETANGPAI,
+                mapOf("PHPSESSID" to "abc", "ketangpai_home_slb" to "x")
+            )
+        )
         assertFalse(SyncRules.hasSession(SyncPlatform.YUKETANG, mapOf("sessionid" to "")))
+        assertFalse(SyncRules.hasSession(SyncPlatform.KETANGPAI, emptyMap()))
+        // 跨平台不串：雨课堂的 sessionid 不能让课堂派变成已登录。
+        assertFalse(SyncRules.hasSession(SyncPlatform.KETANGPAI, mapOf("sessionid" to "s")))
     }
 
     @Test

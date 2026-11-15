@@ -70,9 +70,16 @@ object SyncRules {
         return out
     }
 
-    /** 任一关键会话 Cookie 存在且非空 → 认为用户已在官方页完成登录。 */
+    /**
+     * 只有**认证 Cookie** 存在且非空才算登录成功。
+     *
+     * ★ §70.7：旧版「任一关键 Cookie 存在」会把匿名 `csrftoken`（雨课堂）/
+     *   `PHPSESSID`（课堂派）误判成已登录。这里必须严格、fail-closed：
+     *   宁可提示「未登录」让用户再点一次，也不能假装登录成功。
+     *   这只是本机 Cookie 判定，**不等于向平台校验过凭证有效性**。
+     */
     fun hasSession(platform: SyncPlatform, cookies: Map<String, String>): Boolean =
-        platform.sessionCookieNames.any { cookies[it]?.isNotBlank() == true }
+        cookies[platform.authCookieName]?.isNotBlank() == true
 
     /** 只返回 Cookie **名字**用于诊断，绝不返回值（那等同登录凭证）。 */
     fun diagnosticNames(cookies: Map<String, String>): List<String> =

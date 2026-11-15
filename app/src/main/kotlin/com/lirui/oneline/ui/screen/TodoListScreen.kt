@@ -2499,23 +2499,31 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                         diagnostic = null
                     }
                 )
-                ItemDivider()
-                OutlinedTextField(
-                    value = hostDraft,
-                    onValueChange = {
-                        hostDraft = it
-                        SyncSettings.setCustomHost(context, it)
-                    },
-                    label = { Text("学校域名（可留空；直接粘整条网址也行）") },
-                    placeholder = { Text(platform.defaultHost) },
-                    supportingText = {
-                        Text("实际登录：" + SyncRules.loginUrl(platform, SyncSettings.host(context, platform)))
-                    },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                )
+                // 课堂派是统一官网，压根没有「学校域名」这回事 —— 只在雨课堂显示，
+                // 免得对着一个用不上的输入框发懵（§70.7）。
+                if (platform == SyncPlatform.YUKETANG) {
+                    ItemDivider()
+                    OutlinedTextField(
+                        value = hostDraft,
+                        onValueChange = {
+                            hostDraft = it
+                            SyncSettings.setCustomHost(context, it)
+                        },
+                        label = { Text("学校雨课堂网址（有就填，没有留空）") },
+                        placeholder = { Text("如 nk.yuketang.cn") },
+                        supportingText = {
+                            Text(
+                                "雨课堂各校是独立子站：填了才会从这个网址打开登录页，" +
+                                    "并从这个域名读取登录凭证。当前：" +
+                                    SyncRules.loginUrl(platform, SyncSettings.host(context, platform))
+                            )
+                        },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                }
                 ItemDivider()
                 SettingsDropdown(
                     label = "同步时机",
@@ -2530,7 +2538,10 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                 ListItem(
                     headlineContent = { Text("登录${platform.label}") },
                     supportingContent = {
-                        Text(if (loggedIn) "已检测到会话凭证" else "未登录 / 会话可能已过期")
+                        Text(
+                            if (loggedIn) "检测到 ${platform.authCookieName}（仅本机 Cookie 判定）"
+                            else "未登录 / 未检测到 ${platform.authCookieName}"
+                        )
                     },
                     trailingContent = {
                         Text(
@@ -2544,22 +2555,37 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                 )
                 ItemDivider()
                 ListItem(
-                    headlineContent = { Text("手动同步一次") },
-                    supportingContent = { Text(SyncEngine.NOT_IMPLEMENTED_HINT) },
+                    headlineContent = { Text("检查同步链路") },
+                    supportingContent = {
+                        Text("读取本机会话并输出诊断；作业抓取尚未接入")
+                    },
                     trailingContent = {
                         Text(
-                            "同步",
+                            "检查",
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.primary
                         )
                     },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     modifier = Modifier.clickable {
-                        Toast.makeText(
-                            context,
-                            "先验证登录：作业抓取与落库将在登录通过后接入",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        // §70.7：不再弹一句固定 Toast，当场把凭证探针的结果摊开给用户看。
+                        val host = SyncSettings.host(context, platform)
+                        val snapshot = SyncCredentialStore.snapshot(platform, host)
+                        val probe = SyncEngine.probe(platform, host, snapshot)
+                        loggedIn = probe.loggedIn
+                        diagnostic = buildString {
+                            append("平台：${platform.label}\n")
+                            append("登录页：${probe.loginUrl}\n")
+                            append(
+                                if (probe.loggedIn) "登录凭证：已读到 ${platform.authCookieName}\n"
+                                else "登录凭证：未读到 ${platform.authCookieName}（需先在官方页登录）\n"
+                            )
+                            append(
+                                if (probe.cookieNames.isEmpty()) "本机 Cookie：没有读到任何条目\n"
+                                else "本机 Cookie：${probe.cookieNames.joinToString(" / ")}\n"
+                            )
+                            append(SyncEngine.NOT_IMPLEMENTED_HINT)
+                        }
                     }
                 )
                 ItemDivider()
@@ -2591,8 +2617,11 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                     )
                 }
                 Text(
-                    "账号密码只在平台官方页面输入，App 不接触、不上传；" +
-                        "会话凭证保存在本机浏览器会话里。本功能为实验性，随时可关闭。",
+                    "账号密码只在平台官方页面输入，App 不接触、不上传。" +
+                        "课堂派用统一官网；雨课堂若学校有专属网址（如 nk.yuketang.cn），" +
+                        "填了才能从对应站点登录并读到该校的登录凭证。" +
+                        "「检测到」只表示本机有 Cookie，不代表平台校验过凭证有效性。" +
+                        "本功能为实验性，随时可关闭。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
@@ -2614,13 +2643,16 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                     SyncSettings.setLastLoginAt(context, System.currentTimeMillis())
                 }
                 diagnostic = buildString {
-                    append(if (probe.loggedIn) "登录成功：" else "未检测到会话凭证：")
                     append(
-                        if (probe.cookieNames.isEmpty()) "没有读到任何 Cookie"
-                        else "读到 Cookie ${probe.cookieNames.joinToString(" / ")}"
+                        if (probe.loggedIn) "已检测到登录凭证 ${platform.authCookieName}。"
+                        else "未检测到登录凭证 ${platform.authCookieName}。"
+                    )
+                    append(
+                        if (probe.cookieNames.isEmpty()) "本机没有读到任何 Cookie"
+                        else "本机读到：${probe.cookieNames.joinToString(" / ")}"
                     )
                     if (!probe.loggedIn) {
-                        append("。请在页面里完成登录后再点「我已完成登录」")
+                        append("。这些多为匿名会话 Cookie，不能算登录；请完成登录后再点一次")
                     }
                 }
             }

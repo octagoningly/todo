@@ -18,8 +18,16 @@ enum class SyncPlatform(
     val defaultHost: String,
     /** 登录页路径（拼在 host 后面）。 */
     val loginPath: String,
-    /** 判断「是否已登录」要看的关键 Cookie 名，任一存在即认为有会话。 */
-    val sessionCookieNames: List<String>,
+    /**
+     * 认证 Cookie：**只有登录成功后才下发**，用它判定「已登录」。
+     *
+     * ★ 不能用 `csrftoken` / `PHPSESSID` —— 前者是 Django 匿名访问就发的 CSRF token，
+     *   后者是 PHP 匿名会话 Cookie，光打开登录页就有了。拿它们判断会误报「已登录」
+     *   （§70.7 真机实测）。判定收不到认证 Cookie 时一律按「未登录」处理，fail-closed。
+     */
+    val authCookieName: String,
+    /** 仅用于诊断展示，不参与登录判定。 */
+    val hintCookieNames: List<String>,
     /** 除登录 host 之外还要一并读取 Cookie 的域名。 */
     val extraCookieHosts: List<String>
 ) {
@@ -30,7 +38,8 @@ enum class SyncPlatform(
         loginPath = "/",
         // 2022 年抓包：登录响应会写 PHPSESSID / ketangpai_home_slb /
         // ketangpai_home_remember，后者内含 token（Max-Age=10800，约 3 小时）。
-        sessionCookieNames = listOf("ketangpai_home_remember", "PHPSESSID"),
+        authCookieName = "ketangpai_home_remember",
+        hintCookieNames = listOf("PHPSESSID", "ketangpai_home_slb"),
         extraCookieHosts = listOf(
             "www.ketangpai.com",
             "ketangpai.com",
@@ -45,8 +54,10 @@ enum class SyncPlatform(
         defaultHost = "www.yuketang.cn",
         // 该页同时提供「账号登录」「微信/App 扫码」「微信快捷登录」。
         loginPath = "/web?type=3",
-        // 社区脚本用 sessionid + csrftoken；学校子域名由用户自己填。
-        sessionCookieNames = listOf("sessionid", "csrftoken"),
+        // 社区脚本用 sessionid + csrftoken；只有 sessionid 是登录后才有。
+        // 学校子域名由用户自己填，否则 Cookie 可能落在别的 host 上读不到。
+        authCookieName = "sessionid",
+        hintCookieNames = listOf("csrftoken"),
         extraCookieHosts = listOf("www.yuketang.cn", "yuketang.cn")
     );
 

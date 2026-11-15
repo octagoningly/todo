@@ -1,5 +1,3 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-
 package com.lirui.oneline.ui.screen
 
 import android.annotation.SuppressLint
@@ -8,7 +6,6 @@ import android.webkit.WebView
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,7 +17,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -41,6 +37,11 @@ import com.lirui.oneline.ui.theme.Text
 
 /**
  * 「在官方页登录第三方平台」的全屏对话框。
+ *
+ * ★ §70.7 布局修复：顶栏**只留一行标题 + 关闭**（46dp），
+ *   说明文字与 URL 全部移到设置页，WebView 用 weight 吃满中间剩余高度。
+ *   旧版顶部堆了「标题栏 + 两段说明 + URL + 分隔线」约 160dp，
+ *   把 PC 版登录页的二维码挤出了可视区，真机上根本扫不了。
  *
  * ★ 这里**不注入任何 JS、不读取输入框、不拦截表单**：账号密码完全由用户在
  *   平台自己的页面里输入，App 只在用户主动点「我已完成登录」之后读一次 Cookie 快照。
@@ -82,24 +83,21 @@ fun HomeworkSyncLoginDialog(
                     .fillMaxSize()
                     .statusBarsPadding()
             ) {
-                TopAppBar(
-                    title = { Text("登录${platform.label}") },
-                    actions = { TextButton(onClick = onDismiss) { Text("关闭") } }
-                )
-                Text(
-                    "请在下方平台官方页面自行完成登录。App 不接触账号密码，" +
-                        "登录状态只保存在本机浏览器会话里；完成后点右下角按钮。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
-                Text(
-                    url,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                )
-                HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp)
+                        .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "登录${platform.label}",
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = onDismiss) { Text("关闭") }
+                }
+                HorizontalDivider()
 
                 AndroidView(
                     modifier = Modifier
@@ -113,7 +111,8 @@ fun HomeworkSyncLoginDialog(
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
                             settings.useWideViewPort = true
-                            settings.loadWithOverviewMode = true
+                            // ★ 不要打开 loadWithOverviewMode：它会把 PC 版登录页整体缩到
+                            //   一屏宽，二维码被缩小挤到边角，手机扫不到（§70.7）。
                             settings.setSupportZoom(true)
                             val cm = CookieManager.getInstance()
                             cm.setAcceptCookie(true)
@@ -127,14 +126,15 @@ fun HomeworkSyncLoginDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        "登录完成后再点这里",
+                        "在上方页面完成登录后点这里",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
                     )
                     Button(onClick = {
                         // CookieManager 必须在主线程读：这里本来就是 Compose 点击事件。
@@ -143,7 +143,6 @@ fun HomeworkSyncLoginDialog(
                         Text("我已完成登录")
                     }
                 }
-                Spacer(Modifier.height(8.dp))
             }
         }
     }

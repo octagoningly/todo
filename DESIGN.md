@@ -5519,3 +5519,56 @@ zuige 澄清：`release/vivo-store` 正在**申请软件著作权**，最好先�
   编出的，仅供本人登录试验，**不可用于对外发版**。
 - `local.properties` 未写入仓库；`ANDROID_HOME` / `JAVA_HOME` 都只作为进程环境变量传入。
 - 版本号不动、不发版；合规分支零改动。
+
+---
+
+## §70.7 真机试用反馈：四处修复（2026-11-15 下午）
+
+zuige 装上后反馈四件事，全部成立。
+
+### 70.7.1 ★ 没登录却显示「已检测到会话凭证」
+
+**根因**：旧版 `SyncRules.hasSession()` 是「任一关键 Cookie 存在即算登录」，
+而 `csrftoken`（Django 的 CSRF token）与 `PHPSESSID`（PHP 匿名会话）
+**光打开登录页就会下发** —— 雨课堂未登录也满足判据，课堂派同理会被误判。
+
+**修法**：`SyncPlatform` 把 Cookie 分成两类 —— 每平台只认一个
+`authCookieName`（课堂派 `ketangpai_home_remember`、雨课堂 `sessionid`），
+`hintCookieNames` 仅供诊断展示。`hasSession` 严格判定且 **fail-closed**：
+读不到认证 Cookie 一律当未登录。`SyncRulesTest` 补了回归用例
+（只有 `csrftoken` / 只有 `PHPSESSID` / 空值 / 跨平台串值都必须为 false）。
+设置页文案同步改成「检测到 xxx（仅本机 Cookie 判定）」，不再宣称登录成功 ——
+本机有 Cookie **不等于**平台校验过凭证有效性。
+
+### 70.7.2 雨课堂二维码被顶部说明挡住
+
+旧对话框顶部堆了 `TopAppBar` + 两段说明 + URL + 分隔线（约 160dp），
+WebView 可视高度被压掉；再加上 `loadWithOverviewMode = true` 会把 PC 版登录页
+整体缩到一屏宽，二维码被缩小挤到边角，真机上扫不了。
+
+**修法**：顶栏压成一行 46dp（标题 + 关闭），说明文字与 URL 全部移到设置页，
+WebView 用 `weight(1f)` 吃满中间；去掉 `loadWithOverviewMode`，保留
+`useWideViewPort` 与缩放支持。整个对话框只剩「一条顶栏 / 页面 / 一条底栏」。
+
+### 70.7.3 点「同步」只弹一句固定提示
+
+本轮本来就没接作业抓取，但固定 Toast 让人以为「我登录了却不让同步」。
+改成「**检查同步链路**」：当场读 Cookie 快照，把平台、登录页 URL、
+期望的认证 Cookie 名、实际读到的 Cookie 名、以及「作业抓取尚未接入」
+一起摊在设置页诊断区。按钮从此有真实输出，也不假装能同步。
+
+### 70.7.4 「学校域名」是干嘛的
+
+- **课堂派**：统一官网，这行完全用不上 → 现在**只在选雨课堂时才显示**。
+- **雨课堂**：各校是独立子站（如 `nk.yuketang.cn`、`gsscut.yuketang.cn`），
+  这个 host 决定两件事：① 打开哪个登录页；② 从哪些域名读登录 Cookie。
+  留空就用通用 `www.yuketang.cn`；如果学校有专属站却没填，
+  登录凭证可能落在别的 host 上，这里就会读不到（fail-closed 报未登录）。
+  文案已改成「学校雨课堂网址（有就填，没有留空）」并附作用说明。
+
+### 70.7.5 验证
+
+- `:app:testDebugUnitTest` **406 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**。
+- 仍按 §70.6 的方式临时对齐 `compileSdk` 37 后改回 36，`build.gradle.kts` 零 diff。
+- 四级顺序：复用设置页组件与 `SyncRules` 纯函数；官方 `Dialog` / `AndroidView` /
+  `WebView`；本轮无新增开源参考；手写部分仍是无 Android 依赖的判定 + 单测。
