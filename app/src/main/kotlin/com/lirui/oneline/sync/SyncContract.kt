@@ -123,11 +123,55 @@ object SyncTrigger {
      *
      * 现在三条触发路径都接上了（冷启动 / 回前台 / 周期 Worker），
      * 选项名如实反映能力，别让用户以为只能手动。
+     *
+     * ★ 周期长度不再写死在文案里 —— 它是独立设置项（[SyncInterval]）。
      */
     val OPTIONS = listOf(
-        ON_OPEN_AND_MANUAL to "自动（打开时 + 回到前台 + 后台每 6 小时）",
+        ON_OPEN_AND_MANUAL to "自动（打开时 + 回到前台 + 后台定时）",
         MANUAL_ONLY to "仅手动",
         // 与上面那条的区别：只在后台静默跑，不做"回前台"补抓。
-        DAILY_REMINDER to "只后台抓（每 6 小时）"
+        DAILY_REMINDER to "只后台抓（按下面的间隔）"
     )
+
+    /** 选中这两种模式时才有「后台抓取间隔」可调。 */
+    fun supportsInterval(mode: Int): Boolean =
+        mode == ON_OPEN_AND_MANUAL || mode == DAILY_REMINDER
+}
+
+/**
+ * ★ §97 后台抓取间隔 —— 独立设置项。
+ *
+ * 用户要求：「你给这个定时请求另外做个设置就好啦，当用户选择自动或者后台的时候，
+ * 就能将选择时间的设置激活」。
+ *
+ * 取值来自 [OPTIONS]，存的是**分钟数**。WorkManager 的周期任务下限是 15 分钟，
+ * 所以最小档就是 15 分钟；再短系统也不会按你写的时间跑。
+ */
+object SyncInterval {
+    /** (分钟, 显示文案) */
+    val OPTIONS: List<Pair<Int, String>> = listOf(
+        15 to "每 15 分钟",
+        30 to "每 30 分钟",
+        60 to "每 1 小时",
+        120 to "每 2 小时",
+        360 to "每 6 小时",
+        720 to "每 12 小时",
+        1440 to "每 24 小时"
+    )
+
+    /** 默认 6 小时：作业不是分秒必争，太频繁只是耗电和被平台限流。 */
+    const val DEFAULT_MINUTES = 360
+
+    /** 下限。WorkManager 硬下限就是 15 分钟，低于它系统会自行拉长。 */
+    const val MIN_MINUTES = 15
+
+    /** 把任意脏值收敛成合法档位（读老数据 / 手改 SharedPreferences 都兜得住）。 */
+    fun normalize(minutes: Int): Int =
+        if (options().any { it.first == minutes }) minutes else DEFAULT_MINUTES
+
+    fun options(): List<Pair<Int, String>> = OPTIONS
+
+    /** 分钟的展示文案，找不到就用通用格式。 */
+    fun label(minutes: Int): String =
+        OPTIONS.firstOrNull { it.first == minutes }?.second ?: "每 $minutes 分钟"
 }

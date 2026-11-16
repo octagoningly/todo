@@ -154,6 +154,8 @@ import com.lirui.oneline.reminder.NotificationHelper
 import com.lirui.oneline.sync.SyncCredentialStore
 import com.lirui.oneline.sync.SyncEngine
 import com.lirui.oneline.sync.SyncPlatform
+import com.lirui.oneline.sync.HomeworkSyncWorker
+import com.lirui.oneline.sync.SyncInterval
 import com.lirui.oneline.sync.SyncSettings
 import com.lirui.oneline.sync.SyncTrigger
 import com.lirui.oneline.ui.MainViewModel
@@ -2577,6 +2579,10 @@ private fun HomeworkSyncSection(context: android.content.Context) {
     var enabled by remember { mutableStateOf(SyncSettings.enabled(context)) }
     var platform by remember { mutableStateOf(SyncSettings.platform(context)) }
     var trigger by remember { mutableStateOf(SyncSettings.triggerMode(context)) }
+    // ★ §97 后台抓取间隔（分钟）。只在「自动 / 只后台抓」时可调。
+    var intervalMinutes by remember { mutableStateOf(SyncSettings.intervalMinutes(context)) }
+    // 上次自动抓取时间，改了间隔后用来提示"多久后才会再抓"。
+    var lastAutoAt by remember { mutableStateOf(SyncSettings.lastAutoSyncAt(context)) }
     var showLogin by remember { mutableStateOf(false) }
     // §70.9：登录态以「用户点过我已完成登录」为准，自动检测只作补充。
     var loggedIn by remember { mutableStateOf(SyncSettings.userConfirmedLogin(context)) }
@@ -2638,7 +2644,33 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                     onSelect = { mode ->
                         trigger = mode
                         SyncSettings.setTriggerMode(context, mode)
-                    }
+                        // ★ §97 改动间隔/模式后要重新入队，否则 Worker 还按老频率跑。
+                        if (SyncTrigger.supportsInterval(mode) &&
+                            SyncSettings.enabled(context)
+                        ) {
+                            HomeworkSyncWorker.ensureScheduled(context)
+                        }
+                    },
+                    // 仅手动时不需要间隔设置，但仍显示（置灰），避免"选项突然消失"的困惑。
+                    enabled = SyncTrigger.supportsInterval(trigger)
+                )
+                ItemDivider()
+                // ★ §97 后台抓取间隔：只有选「自动」或「只后台抓」时才可点。
+                //   用户要求：「当用户选择自动或者后台的时候，就能将选择时间的设置激活」。
+                SettingsDropdown(
+                    label = "后台抓取间隔",
+                    options = SyncInterval.OPTIONS,
+                    selectedValue = intervalMinutes,
+                    onSelect = { minutes ->
+                        intervalMinutes = minutes
+                        SyncSettings.setIntervalMinutes(context, minutes)
+                        // 立即重排 Worker，新间隔马上生效（UPDATE 策略）。
+                        if (SyncSettings.enabled(context)) {
+                            HomeworkSyncWorker.ensureScheduled(context)
+                        }
+                        lastAutoAt = SyncSettings.lastAutoSyncAt(context)
+                    },
+                    enabled = SyncTrigger.supportsInterval(trigger)
                 )
                 ItemDivider()
                 ListItem(
@@ -3684,18 +3716,61 @@ private fun SettingsDropdown(
     selectedValue: Int,
     onSelect: (Int) -> Unit,
     /** 当前值文案。默认取 options 里对应项的 label，少数场景才需要另给。 */
-    valueText: String? = null
+    valueText: String? = null,
+    /**
+     * ★ §97 是否可点。false 时整行置灰、点不动、菜单也不会展开。
+     *
+     * 用途：条件依赖的下拉项 —— 比如「后台抓取间隔」只在同步时机选了
+     * 「自动 / 只后台抓」时才有意义。**置灰而不是隐藏**：
+     * 选项突然消失会让人以为功能坏了，看得见但点不动才是清楚的表达。
+     */
+    enabled: Boolean = true
 ) {
     var expanded by remember { mutableStateOf(false) }
     val current = valueText ?: options.firstOrNull { it.first == selectedValue }?.second.orEmpty()
+    // 置灰时若菜单还开着（外部状态变化），要强制收起，否则会留下一个能点的菜单。
+    if (!enabled && expanded) expanded = false
+    val contentColor = if (enabled) {
+        MaterialTheme.colorScheme.onSurface
+    } else {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+    }
 
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+    ExposedDropdownMenuBox(
+        expanded = expanded && enabled,
+        onExpandedChange = { if (enabled) expanded = it }
+    ) {
         ListItem(
-            headlineContent = { Text(label, style = MaterialTheme.typography.bodyLarge) },
-            supportingContent = { Text(current, style = MaterialTheme.typography.bodySmall) },
-            trailingContent = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            headlineContent = {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = contentColor
+                )
+            },
+            supportingContent = {
+                Text(
+                    if (enabled) current else "先选「自动」或「只后台抓」",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (enabled) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                    }
+                )
+            },
+            trailingContent = {
+                ExposedDropdownMenuDefaults.TrailingIcon(
+                    expanded = expanded && enabled,
+                    modifier = if (enabled) Modifier
+                    else Modifier.graphicsLayer { alpha = 0.38f }
+                )
+            },
             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+            modifier = Modifier.menuAnchor(
+                ExposedDropdownMenuAnchorType.PrimaryNotEditable,
+                enabled = enabled
+            )
         )
         // 菜单底色/圆角跟全局卡片同一套（M3 默认是 surfaceContainer + 4dp 圆角）。
         ExposedDropdownMenu(

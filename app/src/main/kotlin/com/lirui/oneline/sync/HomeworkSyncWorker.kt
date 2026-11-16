@@ -64,17 +64,22 @@ class HomeworkSyncWorker(
     companion object {
         private const val TAG = "OnelineProbe"
         private const val UNIQUE_NAME = "homework_sync_periodic"
-        private const val INTERVAL_HOURS = 6L
 
         /**
-         * 注册周期任务。幂等：重复调用不会叠加多个任务
-         * （`ExistingPeriodicWorkPolicy.KEEP` 保留已在跑的那个）。
+         * 注册周期任务。幂等：重复调用不会叠加多个任务。
          *
-         * 总闸关掉时由调用方负责 [cancel]。
+         * ★ §97 间隔改为读用户设置（[SyncSettings.intervalMinutes]，默认 6 小时）。
+         *   用户改间隔后必须**重新入队**才生效，所以用 `UPDATE` 而不是 `KEEP`：
+         *   - `KEEP` 只在任务不存在时新建，改间隔后旧任务会一直按老频率跑；
+         *   - `UPDATE` 替换已存在的任务，间隔立即生效。
+         *
+         * ★ WorkManager 周期下限是 15 分钟（[SyncInterval.MIN_MINUTES]），
+         *   更短系统会自行拉长，所以设置里最小档就是 15 分钟。
          */
         fun ensureScheduled(context: Context) {
+            val minutes = SyncSettings.intervalMinutes(context)
             val request = PeriodicWorkRequestBuilder<HomeworkSyncWorker>(
-                INTERVAL_HOURS, TimeUnit.HOURS
+                minutes.toLong(), TimeUnit.MINUTES
             )
                 // 没网就别唤醒 —— 抓取必须联网，白跑一次还会拖长待机。
                 .setConstraints(
@@ -86,7 +91,7 @@ class HomeworkSyncWorker(
             runCatching {
                 WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                     UNIQUE_NAME,
-                    ExistingPeriodicWorkPolicy.KEEP,
+                    ExistingPeriodicWorkPolicy.UPDATE,
                     request
                 )
             }

@@ -116,17 +116,17 @@ object SyncSettings {
      * 四条门槛，缺一不可：
      * 1. 总闸开着（用户没关）；
      * 2. 同步时机不是「仅手动」；
-     * 3. 距上次自动抓取已超过 [minIntervalMillis]（默认 6 小时）——
+     * 3. 距上次自动抓取已超过 **用户设置的间隔**（默认 6 小时）——
      *    避免用户频繁切 App 时反复发请求打平台；
      * 4. 至少有一个平台已登录（由调用方判断，这里不管）。
      *
      * ★ §96 补充：选了 `DAILY_REMINDER`（只后台抓）时**跳过前台触发**，
      *   这样用户选「只后台」就真的不会在打开 App 时抓。
+     * ★ §97 间隔改为读 [intervalMinutes]，不再是写死的 6 小时常量。
      */
     fun shouldAutoSync(
         context: Context,
         nowMillis: Long,
-        minIntervalMillis: Long = AUTO_SYNC_MIN_INTERVAL_MS,
         fromForeground: Boolean = true
     ): Boolean {
         if (!enabled(context)) return false
@@ -136,11 +136,26 @@ object SyncSettings {
         if (mode == SyncTrigger.DAILY_REMINDER && fromForeground) return false
         val last = lastAutoSyncAt(context)
         if (last <= 0L) return true
-        return nowMillis - last >= minIntervalMillis
+        return nowMillis - last >= intervalMinutes(context) * 60_000L
     }
 
-    /** 自动抓取最小间隔：6 小时。 */
+    // ---------- §97 后台抓取间隔 ----------
+
+    /** 用户设置的后台抓取间隔（分钟）。默认 6 小时，非法值自动回默认。 */
+    fun intervalMinutes(context: Context): Int =
+        SyncInterval.normalize(
+            prefs(context).getInt(KEY_SYNC_INTERVAL, SyncInterval.DEFAULT_MINUTES)
+        )
+
+    fun setIntervalMinutes(context: Context, minutes: Int) {
+        prefs(context).edit()
+            .putInt(KEY_SYNC_INTERVAL, SyncInterval.normalize(minutes))
+            .apply()
+    }
+
+    /** 自动抓取最小间隔（旧常量，保留给测试与向后兼容）。 */
     const val AUTO_SYNC_MIN_INTERVAL_MS = 6L * 60 * 60 * 1000
 
     private const val KEY_LAST_AUTO_SYNC = "last_auto_sync_at"
+    private const val KEY_SYNC_INTERVAL = "sync_interval_minutes"
 }

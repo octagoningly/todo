@@ -20,13 +20,13 @@ class HomeworkNotifyAndScheduleTest {
         val defaultLabel = SyncTrigger.OPTIONS
             .first { it.first == SyncTrigger.ON_OPEN_AND_MANUAL }.second
         assertTrue("默认项应说明会回前台补抓", defaultLabel.contains("回到前台"))
-        assertTrue("默认项应说明有后台周期抓取", defaultLabel.contains("后台"))
+        assertTrue("默认项应说明有后台抓取", defaultLabel.contains("后台"))
 
         val manual = SyncTrigger.OPTIONS.first { it.first == SyncTrigger.MANUAL_ONLY }.second
         assertEquals("仅手动", manual)
 
         val bgOnly = SyncTrigger.OPTIONS.first { it.first == SyncTrigger.DAILY_REMINDER }.second
-        assertTrue("只后台选项要写明周期", bgOnly.contains("6 小时"))
+        assertTrue("只后台选项要说明按设置的间隔跑", bgOnly.contains("间隔"))
     }
 
     @Test
