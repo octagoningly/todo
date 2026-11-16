@@ -6633,3 +6633,95 @@ settings.useWideViewPort = true
    但服务端对未登录用户的跳转把它又踢回 PC 页。
    **验证一个改动要看实际落地页（`domUrl`），不能只看我请求了什么 URL。**
    这次是 DOM 体检里的 `domUrl` 一眼戳穿的 —— 这个字段价值很高。
+
+---
+
+## §82 ★ 雨课堂课程列表终于对了，但章节树走错路线（2026-11-16）
+
+### 82.1 重大进展：课程列表拿到 50 门
+
+用 `/v2/api/web/courses/list?identity=2` + `/v2/api/web/classroom_archive`：
+
+```
+课程来源：courses-v2-identity2=32 / courses-archive=18 / courses-mooc-legacy=0
+课程数：50
+```
+
+**50 门课全部到位**，其中本学期的（`term=202601`）：
+
+```
+复变函数与数学物理方法(33307885)
+信号与系统 / 量子力学与固体物理 / 数字电路与逻辑设计（一）/ Matlab计算与仿真 /
+电子电路实习 / 马克思主义基本原理 / 形势与政策（二）/ 体育 / 劳动教育 …
+```
+
+对照之前的 2 门 MOOC 课，这次是真的对了。
+`courses-mooc-legacy=0` 也印证了「MOOC 接口和课堂端是两套数据」。
+
+### 82.2 ★ 新问题：42/50 门课章节树回 80019
+
+```
+chapter-*  400  {"msg":"请购买该课程之后再学习","error_code":80019}
+```
+
+**根因：我把「学期标签」当成了 `course_sign`。**
+
+课堂端 `/v2/api/web/courses/list` 的响应里**根本没有 `course_sign`** ——
+那个 `C32F2427949868N` 格式的 sign 只属于 **MOOC 接口**的 `product_list`。
+我在 `parseWebCourses` 里把第三项填成了 `termLabel()` 的结果，拼出来的 URL 是：
+
+```
+.../chapter?cid=33307885&term=latest&sign=2026-2027%2F1%20%E9%99%88%E7%90%A8
+                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 这是"2026-2027/1 陈琨"
+```
+
+服务端当然不认。**只有 8 门课运气好没报 80019 的才通了**（比如 `cid=30547802`
+那门是 MOOC 来源、sign 恰好是教师名也能过）。
+
+### 82.3 正解：课堂端课程走 c27
+
+调研里其实早写了这条 —— **错误码 80019 的处置是「换 c27 接口」**：
+
+```
+GET /c27/online_courseware/schedule/course/progress/?classroom_id={cid}&course_id={cid2}
+```
+
+需要两个参数：
+
+| 参数 | 来源 |
+| --- | --- |
+| `classroom_id` | 课程列表的 `classroom_id`（归档接口是 `id`） |
+| `course_id` | 课程详情 `/v2/api/web/classrooms/{cid}` 的 `data.course_id`（**字符串**） |
+
+课程详情实测返回（`33307885` = 复变函数）：
+
+```json
+{"data":{"id":33307885,"course_id":"4226944",
+ "course_name":"复变函数与数学物理方法","teacher_name":"陈琨","uv_id":2668}}
+```
+
+本轮已改为：**课堂端课程 → 课程详情拿 course_id → c27 进度拿节点**，
+不再对课堂端课程使用 mooc-api 章节树。
+
+### 82.4 本轮改动
+
+| 件 | 改动 |
+| --- | --- |
+| `parseWebCourses` | 明确第三项是**学期标签**，注释写明「绝不能再当 sign 用」 |
+| `probeYuketang` | 课堂端课程改走 `classrooms/{cid}` → `c27 progress` → `logs`；新增 `c27Probed` / `c27WithLeaf` 统计 |
+| `parseC27Leaves` | 新增：c27 响应结构未知，用**递归结构化遍历**找任何带 `leaf_type`/`leafType` 的对象，并兼容 `end_time`/`endTime` 等命名 |
+| `yuketangClassroomDetail` / `yuketangLogsRequest` | 新增两个请求规格 |
+| 摘要 | 增加「c27：探测 N 门 / 拿到节点 M 门」，用来区分「节点没拿到」与「这课真没作业」 |
+| `YuketangClassroomPathTest` | 新增 6 条：课堂端无 `course_sign`、学期标签不能当 sign、详情带 `course_id`、c27 需两个 id、课程来源相加、logs 的 `page=0`/`offset=页大小` |
+
+### 82.5 验证
+
+- `:app:testDebugUnitTest` **464 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**；
+  `adb install -r` **Success**。
+
+### 82.6 ★ 教训（第 6 条）
+
+6. **三元组 / 位置参数的第二、三项最容易张冠李戴。**
+   `Triple<classroom_id, name, XXX>` 里的 `XXX` 我先后当过 `classroom_name`、`course_sign`，
+   每次都是「类型都是 String，编译期毫无提示，运行时才 400」。
+   **位置返回的东西应该具名**（data class），而不是一路 `Triple` 下去。

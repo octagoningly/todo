@@ -364,6 +364,52 @@ object NativeProbeRunner {
         parseKetangpaiCourses(json).firstOrNull()?.first
 
     /**
+     * `c27` 课程进度响应 → 扁平节点（§82 新增）。
+     *
+     * 这个接口的结构与 mooc 章节树**完全不同**，所以单独解析。已知返回里有
+     * `data` 包裹，内容按"章节 → 小节 → 叶"层级；这里做**结构化遍历**：
+     * 递归找任何带 `leaf_type`（或 `leafType`）的对象，统一扁平化，
+     * 并对 `end_time` / `score_deadline` / `endTime` 等命名做兼容。
+     */
+    fun parseC27Leaves(json: String?, courseName: String): List<JSONObject> {
+        if (json.isNullOrBlank()) return emptyList()
+        val root = runCatching { JSONObject(json) }.getOrNull() ?: return emptyList()
+        val out = mutableListOf<JSONObject>()
+        fun walk(o: Any?, depth: Int) {
+            if (depth > 8) return
+            when (o) {
+                is JSONObject -> {
+                    val lt = o.optString("leaf_type").ifBlank { o.optString("leafType") }
+                    if (lt.isNotBlank()) {
+                        val id = o.optLong("id", 0L).takeIf { it > 0L }
+                            ?: o.optLong("leaf_id", 0L).takeIf { it > 0L }
+                        out += JSONObject().apply {
+                            put("course", courseName)
+                            put("name", o.optString("name").ifBlank { o.optString("title") })
+                            put("leaf_type", lt)
+                            put("id", id ?: 0L)
+                            put("end_time", o.optLong("end_time", 0L).takeIf { it > 0 }
+                                ?: o.optLong("endTime", 0L))
+                            put("score_deadline", o.optLong("score_deadline", 0L).takeIf { it > 0 }
+                                ?: o.optLong("scoreDeadline", 0L))
+                            put("start_time", o.optLong("start_time", 0L).takeIf { it > 0 }
+                                ?: o.optLong("startTime", 0L))
+                            put("source", "c27")
+                        }
+                    }
+                    val keys = o.keys()
+                    while (keys.hasNext()) walk(o.opt(keys.next()), depth + 1)
+                }
+                is org.json.JSONArray -> {
+                    for (i in 0 until o.length()) walk(o.opt(i), depth + 1)
+                }
+            }
+        }
+        walk(root.opt("data") ?: root, 0)
+        return out
+    }
+
+    /**
      * 带学期信息的课程解析（§77）。
      *
      * ★ 目的：判断「本学期有没有课」。返回 (id, 课程名, "semester/term")。
@@ -440,22 +486,43 @@ object NativeProbeRunner {
         root.put("termCounts", termCounts)
 
         val allNodes = org.json.JSONArray()
-        courses.forEachIndexed { i, c ->
-            // 章节树：课堂端课程的 sign 可能为空，照发（接口对空 sign 也能回）。
-            val chapter = execute(
-                NativeProbeSpec.yuketangChapterRequest(
-                    host, cookies, i, c.first, c.third
+        // ★ §82：课堂端课程**不走** mooc-api 章节树。
+        //
+        //   实测 42/50 门课回 `{"error_code":80019,"msg":"请购买该课程之后再学习"}` ——
+        //   因为课堂端课程没有 `course_sign`（那是 MOOC 接口的字段），
+        //   而且这类课程本来就不在 mooc 体系里。
+        //
+        //   正解：走 `c27` 进度接口（调研里 80019 的官方处置就是换 c27），
+        //   它只需要 classroom_id + course_id；course_id 在课程详情
+        //   `/v2/api/web/classrooms/{cid}` 的 `data.course_id` 里。
+        var c27Count = 0
+        var c27WithLeaf = 0
+        courses.forEachIndexed { _, c ->
+            val cid = c.first
+            // 1) 课程详情：拿 course_id（章节树/进度都要）
+            val detail = execute(NativeProbeSpec.yuketangClassroomDetail(host, cookies, cid))
+            results.put(detail)
+            val courseId = runCatching {
+                JSONObject(detail.optString("sample"))
+                    .optJSONObject("data")?.optString("course_id").orEmpty()
+            }.getOrDefault("")
+
+            if (courseId.isNotBlank()) {
+                // 2) c27 进度：课堂端真正的课程内容入口
+                val prog = execute(
+                    NativeProbeSpec.yuketangC27ProgressRequest(host, cookies, cid, courseId)
                 )
-            )
-            results.put(chapter)
-            val nodes = parseYuketangNodes(chapter.optString("sample"), c.second)
-            for (n in nodes) allNodes.put(n)
-            results.put(execute(NativeProbeSpec.yuketangScheduleRequest(host, cookies, c.first, c.third)))
-            // 活动时间轴：作业/考试会以 activity 形式出现，是独立于章节树的第二条线索。
-            for (req in NativeProbeSpec.yuketangCourseDetailRequests(host, cookies, c.first)) {
-                results.put(execute(req))
+                results.put(prog)
+                c27Count++
+                val leafs = parseC27Leaves(prog.optString("sample"), c.second)
+                if (leafs.isNotEmpty()) c27WithLeaf++
+                for (n in leafs) allNodes.put(n)
             }
+            // 3) 活动时间轴：作业/考试以 activity 形式出现，独立线索。
+            results.put(execute(NativeProbeSpec.yuketangLogsRequest(host, cookies, cid)))
         }
+        root.put("c27Probed", c27Count)
+        root.put("c27WithLeaf", c27WithLeaf)
 
         root.put("nodes", allNodes)
         var withDeadline = 0
@@ -554,38 +621,34 @@ object NativeProbeRunner {
         }
         lines += "课程数：${root.optInt("courseCount")} / 节点：${root.optJSONArray("nodes")?.length() ?: 0}" +
             " / leaf_type $leafCounts"
+        // ★ §82：c27 路线单独报，用来区分「课时节点没拿到」与「这课真没作业」。
+        lines += "c27：探测 ${root.optInt("c27Probed")} 门 / 拿到节点 ${root.optInt("c27WithLeaf")} 门"
         lines += "作业 ${root.optInt("homeworkCount")} 个 / 考试 ${root.optInt("examCount")} 个" +
             " / 有绝对截止 $withDeadline 个"
         return lines.joinToString("\n")
     }
 
     /**
-     * 课堂端课程列表解析 —— **同时兼容两种真实结构**（§79 按实测响应校准）。
+     * 课堂端课程列表解析 —— 返回 (classroom_id, 课程名, 学期标签)。
      *
-     * `/v2/api/web/courses/list?identity=2` → `data.list[]`：
-     * ```json
-     * {"term":202502,"name":"2026春-202523912","classroom_id":29785730,
-     *  "teacher":{"name":"黎星楠"},
-     *  "course":{"id":5605956,"name":"AI+口译"},"role":5}
-     * ```
-     * `/v2/api/web/classroom_archive` → `data.classrooms[]`：
-     * ```json
-     * {"name":"2025秋-…","id":27798058,"course":{"id":3615879,"name":"…"},
-     *  "term":202501,"university_name":"中山大学"}
-     * ```
+     * ★ §82 **重大修正**：第三个字段以前被当作 `course_sign` 用，这是错的。
      *
-     * ★ 两处易错点：
-     *   1. 归档接口的主键叫 **`id`**，未归档叫 **`classroom_id`**，要分别取。
-     *   2. 课程名在 **`course.name`**，而顶层的 `name` 是**课堂名**（带学期前缀那种）。
-     *      两者都用上：课程名取 `course.name`，课堂名（含学期）单独留。
+     *   `/v2/api/web/courses/list` 的响应里**没有 `course_sign`** ——
+     *   那个 `C32F2427949868N` 只出现在 **MOOC 接口**（`user-courses` 的 `product_list`）里。
+     *   课堂端课程拿不到 sign，我之前把 `termLabel()` 的结果（`2026-2027/1 陈琨`）
+     *   当成 sign 拼进章节树 URL，于是 42 门课全部回：
+     *   `{"msg":"请购买该课程之后再学习","error_code":80019}`。
      *
-     * `term` 是**数字**：`202502` = 2025-2026 学年第二学期；`202601` = 2026-2027 第一学期。
+     *   ★ 而调研早就写了这条：错误码 **80019 的处置是「用 c27 接口绕开」**。
+     *   所以课堂端课程**不能**走 `mooc-api/.../chapter`，要走
+     *   `/c27/online_courseware/schedule/course/progress/?classroom_id=&course_id=`。
+     *
+     *   第三项现在只承载「学期标签」用于展示与过滤，**绝不再当 sign 用**。
      */
     fun parseWebCourses(json: String?): List<Triple<String, String, String?>> {
         if (json.isNullOrBlank()) return emptyList()
         val obj = runCatching { JSONObject(json) }.getOrNull() ?: return emptyList()
         val data = obj.optJSONObject("data") ?: return emptyList()
-        // 未归档在 data.list，归档在 data.classrooms。
         val arr = data.optJSONArray("list") ?: data.optJSONArray("classrooms")
             ?: return emptyList()
         val out = mutableListOf<Triple<String, String, String?>>()
@@ -596,11 +659,11 @@ object NativeProbeRunner {
                 ?: c.optLong("id", 0L).takeIf { it > 0L }
                 ?: continue
             val course = c.optJSONObject("course")
-            // 课程名优先 course.name；退而用顶层 name（课堂名，通常带学期前缀）。
             val courseName = course?.optString("name")?.takeIf { it.isNotBlank() }
                 ?: c.optString("name")
             val term = c.optLong("term", 0L).takeIf { it > 0L }
             val teacher = c.optJSONObject("teacher")?.optString("name").orEmpty()
+            // 第三项：**学期标签**（仅供展示/过滤），不是 sign。
             out += Triple(cid.toString(), courseName, termLabel(term, teacher))
         }
         return out

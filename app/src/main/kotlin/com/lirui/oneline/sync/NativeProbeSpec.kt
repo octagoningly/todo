@@ -454,6 +454,47 @@ object NativeProbeSpec {
     }
 
     /**
+     * 课程详情：拿 `course_id` 与 `uv_id`（§82）。
+     *
+     * 实测 `/v2/api/web/classrooms/{cid}?role=5` 返回：
+     * ```json
+     * {"data":{"id":33307885,"course_id":"4226944","course_name":"复变函数与数学物理方法",
+     *  "teacher_name":"陈琨","uv_id":2668,"user_role":5}}
+     * ```
+     * `course_id` 是 c27 进度接口必需的参数。
+     */
+    fun yuketangClassroomDetail(
+        host: String,
+        cookies: Map<String, String>,
+        classroomId: String
+    ): ProbeRequest = ProbeRequest(
+        name = "classroom-$classroomId",
+        method = "GET",
+        url = "https://$host/v2/api/web/classrooms/$classroomId?role=5",
+        headers = yuketangHeaders(cookies, xtbz = "ykt", xClient = true),
+        body = null,
+        tokenMode = "none"
+    )
+
+    /**
+     * 活动时间轴（§82）：作业/考试会以 activity 形式出现，是独立于章节树的线索。
+     * ★ `page` 从 **0** 开始，`offset` 的含义是**每页条数**不是跳过条数。
+     */
+    fun yuketangLogsRequest(
+        host: String,
+        cookies: Map<String, String>,
+        classroomId: String
+    ): ProbeRequest = ProbeRequest(
+        name = "logs-$classroomId",
+        method = "GET",
+        url = "https://$host/v2/api/web/logs/learn/$classroomId" +
+            "?actype=-1&page=0&offset=200&sort=-1",
+        headers = yuketangHeaders(cookies, xtbz = "ykt", xClient = true),
+        body = null,
+        tokenMode = "none"
+    )
+
+    /**
      * `c27` 章节进度接口：调研称可绕开 `mooc-api` 章节树的 80019 错误，
      * 需要 `classroom_id` + `course_id`（后者在课程列表里叫 `course.id`）。
      */
