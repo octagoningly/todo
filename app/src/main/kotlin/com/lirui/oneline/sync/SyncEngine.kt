@@ -50,47 +50,36 @@ object SyncEngine {
                 return emptyList()
             }
         val items = NativeProbeRunner.extractImportItems(platform, root)
-        Log.d(TAG, "collectPreview extracted=${items.size}")
+        // ★ §90：这里**真的**按学期筛了 —— 条目自带 semesterTag（从课程池回填），
+        //   之前传 { null } 等于没筛，靠"未过期"间接挡往期作业，
+        //   但可补交的往期作业会漏网。
+        val current = semesterTag ?: currentSemesterTag()
         val preview = ImportRules.buildPreview(
             items = items,
-            // 课堂派的学期标签在课程池里，这里用「课程名 → 学期」映射；
-            // 目前两个平台的 ImportItem 都不带学期，所以传 null = 不筛学期。
-            // ★ 学期过滤实际由调用方传入的 semesterTag 与课程池配合完成，
-            //   见 PreviewWithSemester。这里保守地不丢数据。
-            semesterOf = { null },
-            currentSemester = null,
+            semesterOf = { it.semesterTag },
+            currentSemester = current,
             nowMillis = nowMillis
         )
-        Log.d(TAG, "collectPreview preview=${preview.size}")
+        Log.d(TAG, "collectPreview extracted=${items.size} semester=$current " +
+            "preview=${preview.size}")
         return preview
     }
 
     /**
-     * 带学期过滤的预览（推荐入口）。
+     * 当前学期标签，如 `2026-2027/1`。
      *
-     * @param semesterTagOf 按课程名给出学期标签，如 `2026-2027/1`；
-     *   返回 null 表示未知（不参与过滤）。
+     * 口径与 [NativeProbeRunner.currentSemesterCandidates] 一致：
+     * **8 月及以后算新学年第一学期**，2–7 月算上一学年第二学期。
+     * 不依赖平台返回的学期顺序（调研指出 `semester[0]` 无代码保证）。
      */
-    fun collectPreviewWithSemester(
-        platform: SyncPlatform,
-        host: String,
-        cookies: Map<String, String>,
-        currentSemester: String?,
-        semesterTagOf: (String) -> String?,
-        nowMillis: Long = System.currentTimeMillis()
-    ): List<ImportRules.PreviewLine> {
-        val root = runCatching { NativeProbeRunner.probe(platform, host, cookies) }
-            .getOrElse { e ->
-                Log.e(TAG, "probe failed: ${e.javaClass.simpleName}", e)
-                return emptyList()
-            }
-        val items = NativeProbeRunner.extractImportItems(platform, root)
-        return ImportRules.buildPreview(
-            items = items,
-            semesterOf = { semesterTagOf(it.courseName) },
-            currentSemester = currentSemester,
-            nowMillis = nowMillis
+    fun currentSemesterTag(nowMillis: Long = System.currentTimeMillis()): String {
+        val cal = java.util.Calendar.getInstance(
+            java.util.TimeZone.getTimeZone("Asia/Shanghai")
         )
+        cal.timeInMillis = nowMillis
+        val year = cal.get(java.util.Calendar.YEAR)
+        val month = cal.get(java.util.Calendar.MONTH) + 1
+        return if (month >= 8) "$year-${year + 1}/1" else "${year - 1}-$year/2"
     }
 
     /** 用户点了「确认导入」才走到这里 —— 唯一会写数据库的地方。 */
@@ -256,9 +245,6 @@ object SyncEngine {
         val cookieNames: List<String>
     )
 
-    /** 说明链路状态的提示文案。 */
-    const val NOT_IMPLEMENTED_HINT =
-        "链路骨架已就绪：登录验证通过后，再接入作业抓取与落库"
 }
 
 /** 避免 SyncEngine 直接依赖 data 包造成循环，用一个薄壳延迟取 Repository。 */

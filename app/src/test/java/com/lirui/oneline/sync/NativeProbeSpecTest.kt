@@ -125,24 +125,6 @@ class NativeProbeSpecTest {
     }
 
     @Test
-    fun `yuketang chapter url carries cid and sign`() {
-        val req = NativeProbeSpec.yuketangChapterRequest(
-            "www.yuketang.cn", emptyMap(), 1, "30547802", "C32F2427949868N"
-        )
-        assertEquals("chapter-1", req.name)
-        assertTrue(req.url.contains("cid=30547802"))
-        assertTrue(req.url.contains("sign=C32F2427949868N"))
-    }
-
-    @Test
-    fun `yuketang chapter url omits sign when absent`() {
-        val req = NativeProbeSpec.yuketangChapterRequest(
-            "www.yuketang.cn", emptyMap(), 0, "1", null
-        )
-        assertFalse(req.url.contains("sign="))
-    }
-
-    @Test
     fun `yuketang leaf info tries two segment form`() {
         val reqs = NativeProbeSpec.yuketangLeafInfoRequests(
             "www.yuketang.cn", emptyMap(), "30547802", "84646252"

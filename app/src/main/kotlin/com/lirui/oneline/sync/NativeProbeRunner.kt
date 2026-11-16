@@ -97,6 +97,60 @@ object NativeProbeRunner {
     }
 
     /**
+     * 课程名 → 学期标签（§90）。
+     *
+     * ★ 为什么需要单独抽：**作业条目本身不带学期**。
+     *   实测课堂派 `homework` 返回的 30 个字段里没有 `semester`；
+     *   雨课堂的 node 也没有。学期只挂在**课程**上：
+     *   - 课堂派：`root.courses` 里是 `课程名 / 2026-2027/1` 这种字符串；
+     *   - 雨课堂：`courses-v2` 响应里每门课有 `term`（数字 202601）。
+     *
+     * 所以先建映射，再用课程名回查。
+     */
+    fun semesterByCourse(platform: SyncPlatform, root: JSONObject): Map<String, String> {
+        val out = HashMap<String, String>()
+        when (platform) {
+            SyncPlatform.KETANGPAI -> {
+                // courses 是 "课程名 / 学期" 的展示字符串数组
+                val arr = root.optJSONArray("courses") ?: return out
+                for (i in 0 until arr.length()) {
+                    val s = arr.optString(i)
+                    val idx = s.lastIndexOf(" / ")
+                    if (idx <= 0) continue
+                    val name = s.substring(0, idx).trim()
+                    val sem = s.substring(idx + 3).trim()
+                    if (name.isNotBlank() && sem.isNotBlank()) out[name] = sem
+                }
+            }
+            SyncPlatform.YUKETANG -> {
+                // 从原始 courses-v2 响应里取 term（数字）
+                val results = root.optJSONArray("results") ?: return out
+                for (i in 0 until results.length()) {
+                    val r = results.optJSONObject(i) ?: continue
+                    val nm = r.optString("name")
+                    if (nm != "courses-v2-identity2" && nm != "courses-archive") continue
+                    val data = runCatching {
+                        JSONObject(r.optString("sample")).optJSONObject("data")
+                    }.getOrNull() ?: continue
+                    val list = data.optJSONArray("list") ?: data.optJSONArray("classrooms")
+                        ?: continue
+                    for (j in 0 until list.length()) {
+                        val c = list.optJSONObject(j) ?: continue
+                        val course = c.optJSONObject("course")
+                        val courseName = course?.optString("name")?.takeIf { it.isNotBlank() }
+                            ?: c.optString("name")
+                        val term = c.optLong("term", 0L).takeIf { it > 0L } ?: continue
+                        if (courseName.isNotBlank()) {
+                            out[courseName] = ImportRules.normalizeSemester(term.toString())
+                        }
+                    }
+                }
+            }
+        }
+        return out
+    }
+
+    /**
      * ★ §86 探针结果 → 可导入的作业列表。
      *
      * 两个平台的结构不同，这里做归一化，交给 [ImportRules] 统一过滤：
@@ -111,6 +165,8 @@ object NativeProbeRunner {
         root: JSONObject
     ): List<ImportRules.ImportItem> {
         val out = mutableListOf<ImportRules.ImportItem>()
+        // ★ §90：先把「课程名 → 学期」建好，作业条目本身不带学期。
+        val semesterMap = semesterByCourse(platform, root)
         when (platform) {
             SyncPlatform.KETANGPAI -> {
                 val results = root.optJSONArray("results") ?: return out
@@ -137,7 +193,8 @@ object NativeProbeRunner {
                             title = o.optString("title"),
                             deadlineMillis = endSec * 1000L,
                             kind = if (nm == "exam") KIND_EXAM else KIND_HOMEWORK,
-                            submitted = false
+                            submitted = false,
+                            semesterTag = semesterMap[courseName]
                         )
                     }
                 }
@@ -163,7 +220,8 @@ object NativeProbeRunner {
                         deadlineMillis = dl,
                         kind = n.optString("kind").ifBlank { classifyYuketangKind(title) },
                         // status=3 表示已完成（真机观测值）。
-                        submitted = n.optInt("status", -1) == 3
+                        submitted = n.optInt("status", -1) == 3,
+                        semesterTag = semesterMap[n.optString("course")]
                     )
                 }
             }
@@ -441,10 +499,6 @@ object NativeProbeRunner {
         }
         return out
     }
-
-    /** 保留旧名给探针主体用：取第一门课的 id。 */
-    fun parseKetangpaiCourseId(json: String?): String? =
-        parseKetangpaiCourses(json).firstOrNull()?.first
 
     /**
      * 活动时间轴 `logs/learn` 解析（§83）—— **雨课堂最好用的数据源**。
@@ -1067,10 +1121,6 @@ object NativeProbeRunner {
      *   留着不影响（有就导，没有就算了）。
      */
     fun isHomeworkOrExam(leafType: String?): Boolean =
-        leafType == "5" || leafType == "6"
-
-    /** 是否是「作业类」节点（用于摘要分组；5/6 都算作业，不再区分考试）。 */
-    fun isHomeworkLike(leafType: String?): Boolean =
         leafType == "5" || leafType == "6"
 
     /**

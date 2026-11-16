@@ -1,7 +1,9 @@
 package com.lirui.oneline.ui.screen
 
 import android.annotation.SuppressLint
+import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
@@ -34,6 +36,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.lirui.oneline.sync.CookieSnapshot
+import com.lirui.oneline.sync.LayoutDiag
 import com.lirui.oneline.sync.NativeProbeRunner
 import com.lirui.oneline.sync.ProbeRunner
 import com.lirui.oneline.sync.SyncCredentialStore
@@ -42,26 +45,38 @@ import com.lirui.oneline.sync.SyncRules
 import com.lirui.oneline.ui.theme.Text
 
 /**
- * ★ §79：**完全不再注入任何 CSS**。
+ * ★ §81：只解锁**滚动**，绝不改 `height` / `width`。
  *
- * 历史教训（两次都在这个位置翻车）：
- * - §70.10 给 `html`/`body` 设 `height:auto` + `overflowY:auto`
- *   → 把雨课堂 Vue SPA 的内部滚动容器顶塌，课程区高度变 0。
- * - §77 改成只给 `body` 加 `paddingBottom:72px`
- *   → 用户反馈「点进去是空白界面」。
- *   `/m/v2` 是移动版，外层是 flex 铺满视口的布局，
- *   给它加 padding 会改变盒模型高度，同样会把内层挤没。
+ * 为什么还是要注入这一点点：
+ * 雨课堂 PC 登录页把滚动锁死（`overflow:hidden` 或固定高度容器）。
+ * 一旦内容比视口高，**下面是滚不到的**——二维码落在下半部分就永远看不全。
+ * §70.10 当初就是因为这个才注入，但它在解锁滚动的同时还把 `height` 改成 `auto`，
+ * 顺手把 SPA 的内部滚动容器顶塌了，于是"修好了登录页、弄坏了课程页"。
  *
- * 结论：**这个页面本来就能正常滚动、正常铺满**，
- * 用户真正需要的只是「别被我们自己的底部按钮条挡住」——
- * 而这件事在**原生布局层**就能干净解决（见底部按钮条下方的 Spacer/inset），
- * 不需要、也不该去改平台自己的页面样式。
+ * 这次严格分离：
+ * - **只**把 `html` / `body` 的 `overflow-y` 从 `hidden` 放开成 `auto`；
+ * - **不碰** `height` / `width` / `padding` / `transform`；
+ * - 加 `important` 提升优先级，但作用面就这一个属性。
  *
- * 保留这个常量只是为了不破坏调用点；内容已清空。
+ * 这段注入对正常页面无害：本来就是 `auto` 的元素再设成 `auto` 等于没变。
  */
-private const val SCROLL_FIX_JS = ""
+private const val SCROLL_FIX_JS = """
+(function(){
+  try {
+    var style = document.createElement('style');
+    style.id = '__oneline_scroll_unlock';
+    style.textContent =
+      'html,body{overflow-y:auto !important;}' +
+      'body{overscroll-behavior-y:auto !important;}' +
+      'html{height:auto !important;min-height:100% !important;}';
+    if (!document.getElementById('__oneline_scroll_unlock')) {
+      (document.head || document.documentElement).appendChild(style);
+    }
+  } catch (e) {}
+})();
+"""
 
-/** 空脚本不执行，避免一次无意义的 evaluateJavascript。 */
+/** 有脚本才执行，避免无意义的一次 evaluateJavascript。 */
 private fun applyLayoutFix(web: WebView) {
     if (SCROLL_FIX_JS.isNotBlank()) web.evaluateJavascript(SCROLL_FIX_JS, null)
 }
@@ -122,15 +137,25 @@ fun HomeworkSyncLoginDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Box(
+        // ★ §81 布局重排：从 Box 叠放改成 Column 上下分区。
+        //
+        // 之前是「WebView fillMaxSize + 按钮条浮在底部」：按钮条**盖住**了网页最下面
+        // 那一条（约 48dp）。PC 登录页的二维码如果落在页面偏下位置，
+        // 被盖住的部分看起来就是"只显示一半"，而且用户还滚不动它。
+        //
+        // 现在：WebView 占满剩余高度（weight 1f），按钮条单独占一行，二者不重叠。
+        // 网页获得的是**完整可用高度**，不会再被我们自己的浮层遮住。
+        androidx.compose.foundation.layout.Column(
             modifier = Modifier
                 .fillMaxSize()
-                // ★ §70.9：上一版改 Box 时漏了这一句，WebView 直接铺到状态栏底下，
-                //   PC 登录页二维码的上半截被系统状态栏截断。网页内容必须从状态栏下方开始。
+                // ★ §70.9：WebView 直接铺到状态栏底下时，二维码上半截会被系统状态栏截断。
+                //   网页内容必须从状态栏下方开始。
                 .statusBarsPadding()
         ) {
             AndroidView(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
                 factory = { context ->
                     WebView(context).apply {
                         settings.javaScriptEnabled = true
@@ -163,6 +188,21 @@ fun HomeworkSyncLoginDialog(
                                 // §79：不再注入任何 CSS。页面自己就能正常滚动/铺满，
                                 // 底部遮挡问题在原生布局层解决（见底部按钮条的 padding）。
                                 view?.let { applyLayoutFix(it) }
+                                // ★ §81：只读测量，把真实数字打到 logcat。
+                                //   盲改三轮都"没变"，必须拿到实际尺寸才能判断
+                                //   是左右被裁、上下被裁，还是二维码元素本身被父容器裁掉。
+                                view?.evaluateJavascript(LayoutDiag.JS, null)
+                            }
+                        }
+                        // ★ §81：把页面里的 console.log 引到 logcat，才能看到测量结果。
+                        //   之前整条链路没有 WebChromeClient，JS 的一切输出都是黑洞。
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onConsoleMessage(msg: ConsoleMessage): Boolean {
+                                val text = msg.message()
+                                if (text.startsWith("ONELINE_LAYOUT")) {
+                                    android.util.Log.d("OnelineProbe", "layout: $text")
+                                }
+                                return true
                             }
                         }
                         val cm = CookieManager.getInstance()
@@ -173,15 +213,13 @@ fun HomeworkSyncLoginDialog(
                 }
             )
 
-            // 唯一的 UI 浮层，贴在底部；顶部完全留给网页。
+            // ★ §81：按钮条不再是浮层，而是**独立的底部一行**。
+            //   之前它浮在 WebView 上，把网页最下面一条盖住 ——
+            //   PC 登录页二维码若落在偏下位置，被盖住的部分就是"只显示一半"。
             Row(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .background(
-                        MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-                        RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
-                    )
+                    .background(MaterialTheme.colorScheme.surface)
                     .navigationBarsPadding()
                     .padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,

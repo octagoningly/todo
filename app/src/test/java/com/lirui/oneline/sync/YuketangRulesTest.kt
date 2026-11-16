@@ -96,14 +96,4 @@ class YuketangRulesTest {
         assertTrue(req.url.contains("/v/exam/cover?exam_id=1945460"))
         assertTrue(req.url.contains("classroom_id=24211265"))
     }
-
-    @Test
-    fun `schedule request carries cid and sign`() {
-        val req = NativeProbeSpec.yuketangScheduleRequest(
-            "www.yuketang.cn", emptyMap(), "30547802", "C32F2427949868N"
-        )
-        assertTrue(req.url.contains("/learn/course/schedule"))
-        assertTrue(req.url.contains("cid=30547802"))
-        assertTrue(req.url.contains("sign=C32F2427949868N"))
-    }
 }

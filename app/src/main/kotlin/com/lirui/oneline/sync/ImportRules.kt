@@ -29,7 +29,18 @@ object ImportRules {
         /** 作业 / 小测 / 考查 / 考试（雨课堂按标题分，课堂派统一"作业"）。 */
         val kind: String,
         /** 平台侧是否已有提交状态（课堂派没有，雨课堂有 status）。 */
-        val submitted: Boolean = false
+        val submitted: Boolean = false,
+        /**
+         * ★ §90 **学期标签**，如 `2026-2027/1`。null = 未知。
+         *
+         * 两个平台都拿得到：
+         * - 课堂派：`semesterCourseList` 每条自带 `semester` + `term`；
+         * - 雨课堂：`/v2/api/web/courses/list` 的 `term`（数字，如 `202601`）。
+         *
+         * ★ 有这个字段才能真正按学期筛。之前靠「只导未过期」间接挡，
+         * 但**可以补交的往期作业截止日还没到**，会被误导入（§89.2 已知问题）。
+         */
+        val semesterTag: String? = null
     )
 
     /** 一条预览行：给用户确认用。 */
@@ -99,12 +110,46 @@ object ImportRules {
     }
 
     /**
-     * 按学期筛（课堂派/雨课堂都给了学期标签）。
-     * 标签为空时不筛（宁可多导也不要漏导）。
+     * 按学期筛。
+     *
+     * ★ §90 三条口径：
+     * 1. **条目有学期标签** → 必须与当前学期**相等**才导入。
+     * 2. **条目没标签**（平台没给）→ 放行。宁可多导一条，也不要因为拿不到
+     *    学期就把正常作业全滤掉。
+     * 3. **当前学期未知** → 不筛。
+     *
+     * 比较前统一把 `2026-2027/1` 与 `202601` 这种写法归一，
+     * 见 [normalizeSemester]。
      */
     fun matchSemester(semesterTag: String?, currentSemester: String?): Boolean {
         if (semesterTag.isNullOrBlank() || currentSemester.isNullOrBlank()) return true
-        return semesterTag == currentSemester
+        return normalizeSemester(semesterTag) == normalizeSemester(currentSemester)
+    }
+
+    /**
+     * 学期写法归一（§90）。
+     *
+     * 两种来源写法不同：
+     * - 课堂派：`2026-2027` + `1` → `2026-2027/1`
+     * - 雨课堂：数字 `202601` → `2026-2027/1`
+     *
+     * 统一成 `yyyy-yyyy/t` 便于比较。认不出来的原样返回（不让格式差异误杀数据）。
+     */
+    fun normalizeSemester(raw: String?): String {
+        val s = raw.orEmpty().trim()
+        if (s.isEmpty()) return ""
+        // 已经是 yyyy-yyyy/t 形式
+        if (s.matches(Regex("""\d{4}-\d{4}/\d"""))) return s
+        // 数字学期：202601 → 2026-2027/1
+        if (s.matches(Regex("""\d{6}"""))) {
+            val year = s.substring(0, 4)
+            val term = s.substring(5, 6)
+            return "$year-${year.toInt() + 1}/$term"
+        }
+        // 课堂派可能给 "2026-2027/1 陈琨"（带教师名），只取前半
+        val m = Regex("""(\d{4}-\d{4})/(\d)""").find(s)
+        if (m != null) return "${m.groupValues[1]}/${m.groupValues[2]}"
+        return s
     }
 
     /** 生成预览。按截止时间升序，最近的排前面。 */

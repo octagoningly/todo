@@ -513,27 +513,6 @@ object NativeProbeSpec {
         tokenMode = "none"
     )
 
-    /** 章节树：每门课一条。 */
-    fun yuketangChapterRequest(
-        host: String,
-        cookies: Map<String, String>,
-        index: Int,
-        classroomId: String,
-        courseSign: String?
-    ): ProbeRequest {
-        var url = "https://$host/mooc-api/v1/lms/learn/course/chapter" +
-            "?cid=$classroomId&term=latest"
-        if (!courseSign.isNullOrBlank()) url += "&sign=${encode(courseSign)}"
-        return ProbeRequest(
-            name = "chapter-$index",
-            method = "GET",
-            url = url,
-            headers = yuketangHeaders(cookies),
-            body = null,
-            tokenMode = "none"
-        )
-    }
-
     /**
      * 作业详情候选。
      *
@@ -643,29 +622,6 @@ object NativeProbeSpec {
         body = null,
         tokenMode = "none"
     )
-
-    /**
-     * 日程接口（存疑候选）。调研实测路由存在但未确认是否含截止时间聚合，
-     * 留着被打一次，省得下一轮再补。
-     */
-    fun yuketangScheduleRequest(
-        host: String,
-        cookies: Map<String, String>,
-        classroomId: String,
-        courseSign: String?
-    ): ProbeRequest {
-        var url = "https://$host/mooc-api/v1/lms/learn/course/schedule" +
-            "?cid=$classroomId&term=latest"
-        if (!courseSign.isNullOrBlank()) url += "&sign=${encode(courseSign)}"
-        return ProbeRequest(
-            name = "schedule",
-            method = "GET",
-            url = url,
-            headers = yuketangHeaders(cookies),
-            body = null,
-            tokenMode = "none"
-        )
-    }
 
     /**
      * 只做百分号编码，不依赖 `java.net.URLEncoder` 的 `+` 行为（query 里 `+` 会被读成空格）。
