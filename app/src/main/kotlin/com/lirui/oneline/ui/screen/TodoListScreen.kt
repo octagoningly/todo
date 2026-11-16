@@ -1677,6 +1677,12 @@ private fun SettingsScreen(
     // ★ §94 两级设置：null = 一级页（只显示大标题）；非 null = 进入该节二级页。
     var openSection by remember { mutableStateOf<SettingsSection?>(null) }
 
+    // ★ §95 用户反馈：一级页滑到底部再进二级页，二级页也停在底部（两者共用 listState）。
+    //   进入 / 退出二级页时都复位到顶部 —— 用户预期「点进去是从头看」。
+    LaunchedEffect(openSection) {
+        listState.scrollToItem(0)
+    }
+
     // ── 数据导出 / 本地恢复（v1.0.11）──
     // 全程走系统文件选择器（SAF）：不需要任何权限，也不新增网络权限。
     val appContext = context.applicationContext
@@ -1828,25 +1834,17 @@ private fun SettingsScreen(
             // 强调方式：标题恒定显示状态徽章 —— 有未放行项时整行转红并写明后果，全齐时显示"已就绪"。
             // 合并「后台常驻」：它和可靠性是同一件事的两半（系统放不放行 / 用户愿不愿意付常驻通知的代价），
             // 拆成两节会让人以为常驻是可有可无的装饰。
+            // ★ §95 用户要求：二级页顶部已有「‹ 提醒」返回栏，这里不再重复标题，
+            //   只保留状态徽章（它承载真实信息：提醒到底会不会响）。
             item {
                 val pending = listOf(notificationsOk, exactOk).count { !it }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "提醒",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = if (pending > 0) MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(start = 8.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        if (pending > 0) "$pending 项待处理，提醒可能不响" else "已就绪",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = if (pending > 0) MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text(
+                    if (pending > 0) "$pending 项待处理，提醒可能不响" else "已就绪",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (pending > 0) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 8.dp)
+                )
             }
             item {
                 ReliabilitySection(
@@ -1920,7 +1918,6 @@ private fun SettingsScreen(
             // ═══ 2. 通知 ═══
             // 三个**并列**的折叠项（zuige 纠正：通知模板只含标题模板+完成后缀+预览，
             // 与提醒文案、常驻通知文案是并列关系，不是包含关系）。
-            item { SectionHeader("通知") }
             item {
                 SettingsCard {
                     NotificationTitleEditor(
@@ -1980,7 +1977,6 @@ private fun SettingsScreen(
         // ★ §94 二级页：只显示当前进入的那一节
         if (openSection == SettingsSection.APPEARANCE) {
             // ═══ 3. 外观 ═══
-            item { SectionHeader("外观") }
             item {
                 SettingsCard {
                     ThemeDropdown(themeMode, onSetThemeMode)
@@ -2081,7 +2077,6 @@ private fun SettingsScreen(
             // ═══ 4. 操作（v0.9.1）═══
             // zuige 拍板：手势不再硬编码，统一收到这一节；沉浸式顶栏也从「外观」移进来 ——
             // 它和手势是同一类东西（"我怎么操作这个列表"），不是配色/字号那种外观。
-            item { SectionHeader("操作") }
             item {
                 SettingsCard {
                     // 同「小组件」节的局部状态模式：直接读写 SettingsRepo，不走 VM 参数链。
@@ -2148,7 +2143,6 @@ private fun SettingsScreen(
             // （同 KeepAliveNotifEditor 的局部状态模式，不走 VM 参数链）。
             // ★ 2026-10-23：不再按组件尺寸分档 —— vivo 桌面报的尺寸恒为 152px，
             //   2×2 和 2×4 一样，按尺寸分开关必然出现"我明明拉到 2×4 却说我是 2×2"。
-            item { SectionHeader("小组件") }
             item {
                 SettingsCard {
                     var showDate by remember {
@@ -2262,7 +2256,6 @@ private fun SettingsScreen(
         // ★ §94 二级页：只显示当前进入的那一节
         if (openSection == SettingsSection.LIST) {
             // ═══ 6. 列表与待办 ═══
-            item { SectionHeader("列表与待办") }
             item {
                 SettingsCard {
                     ListItem(
@@ -2319,7 +2312,6 @@ private fun SettingsScreen(
         // ★ §94 二级页：只显示当前进入的那一节
         if (openSection == SettingsSection.DATA) {
             // ═══ 7. 数据（v1.0.11）：纯本地导出 / 恢复 ═══
-            item { SectionHeader("数据") }
             item {
                 SettingsCard {
                     ListItem(
@@ -2380,7 +2372,6 @@ private fun SettingsScreen(
             // ═══ 8. 作业自动导入（实验分支，默认关闭；见 DESIGN.md 本版小节）═══
             // 放在「数据」之后、「测试」之前：它是低频的账号类设置，
             // 不该挤进每天都要看的提醒/外观，但也不该埋在排障项后面。
-            item { SectionHeader("作业自动导入") }
             item { HomeworkSyncSection(context) }
 
         }
@@ -2388,7 +2379,6 @@ private fun SettingsScreen(
         // ★ §94 二级页：只显示当前进入的那一节
         if (openSection == SettingsSection.TEST) {
             // ═══ 9. 测试（全页最后）═══
-            item { SectionHeader("测试") }
             item {
                 SettingsCard {
                     ListItem(
@@ -2547,19 +2537,6 @@ private fun SettingsScreen(
             }
         )
     }
-}
-
-@Composable
-private fun SectionHeader(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.primary,
-        fontWeight = FontWeight.Bold,
-        // 列表本身已有 spacedBy(10dp)，这里只补剩下的差额：
-        // 标题上方 = 10 + 10 = 20dp（原来的手感），下方 = 2 + 10 = 12dp。
-        modifier = Modifier.padding(start = 8.dp, top = 10.dp, bottom = 2.dp)
-    )
 }
 
 /**

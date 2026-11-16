@@ -35,17 +35,46 @@ class ImportRulesTest {
     ) = ImportRules.ImportItem(platform, externalId, course, title, deadline, kind)
 
     @Test
-    fun `todo title joins course kind and title`() {
-        assertEquals(
-            "微电班复变函数与数学物理方法 · 作业 · 5.2 傅里叶积分与傅里叶变换",
-            ImportRules.todoTitle(
-                "微电班复变函数与数学物理方法", "作业", "5.2 傅里叶积分与傅里叶变换"
-            )
+    fun `todo title puts kind first then course`() {
+        // ★ §95 用户要求：名字改成「作业-数字电路与……」这样，类型在最前。
+        //   原标题与科目不重复时会追加在后面（便于辨别具体哪一次）。
+        val t1 = ImportRules.todoTitle("数字电路与逻辑设计（一）", "作业", "Homework_7")
+        assertTrue("类型必须最前", t1.startsWith("作业-数字电路与逻辑设计（一）"))
+        assertTrue("原标题要有", t1.contains("Homework_7"))
+
+        val t2 = ImportRules.todoTitle(
+            "微电班复变函数与数学物理方法", "作业", "5.2 傅里叶积分与傅里叶变换"
         )
-        // 空字段要跳过，不留下「· · 」这种脏标题。
-        assertEquals("习题", ImportRules.todoTitle("", "", "习题"))
-        assertEquals("信号与系统 · 小测 · 小测1",
-            ImportRules.todoTitle("信号与系统", "小测", "小测1"))
+        assertTrue(t2.startsWith("作业-微电班复变函数与数学物理方法"))
+        assertTrue(t2.contains("5.2 傅里叶积分与傅里叶变换"))
+
+        val t3 = ImportRules.todoTitle("信号与系统", "小测", "小测1")
+        assertEquals("小测-信号与系统·小测1", t3)
+    }
+
+    @Test
+    fun `todo title appends original title when it adds info`() {
+        // 原标题与科目不同、且不重复时，追加在后面便于辨别具体哪一次。
+        val t = ImportRules.todoTitle("信号与系统", "作业", "第九讲作业")
+        assertTrue("应含类型前缀", t.startsWith("作业-信号与系统"))
+        assertTrue("应含原标题", t.contains("第九讲作业"))
+    }
+
+    @Test
+    fun `todo title avoids repeating course name`() {
+        // 原标题里已经含科目名时不再复读。
+        val t = ImportRules.todoTitle("线性代数", "作业", "线性代数第十次作业")
+        assertEquals("作业-线性代数", t)
+        // 完全同名也不复读
+        assertEquals("作业-信号与系统", ImportRules.todoTitle("信号与系统", "作业", "信号与系统"))
+    }
+
+    @Test
+    fun `todo title falls back when course missing`() {
+        // 没科目时退回原标题，仍要带类型前缀。
+        assertEquals("作业-习题", ImportRules.todoTitle("", "作业", "习题"))
+        // 类型为空时默认「作业」；此时 №科目与标题不重复 → 追加原标题
+        assertEquals("作业-信号与系统·第九讲", ImportRules.todoTitle("信号与系统", "", "第九讲"))
     }
 
     @Test

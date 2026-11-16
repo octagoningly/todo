@@ -57,18 +57,36 @@ object ImportRules {
     )
 
     /**
-     * 拼待办标题：`科目 · 类型 · 原标题`。
+     * 拼待办标题：`类型-科目`，没有科目时退回 `类型-原标题`。
      *
-     * 例子：`复变函数与数学物理方法 · 作业 · 5.2 傅里叶积分与傅里叶变换`
+     * ★ §95 用户要求：「名字改为『作业-数字电路与……』这样，前面有个作业比较容易分辨出来」。
      *
-     * ★ 为什么带「类型」：雨课堂里 `第九讲作业` 与 `小测1` 都是 type=5，
-     *   不标出来在待办列表里完全分不清性质。
+     * 格式分层（越靠前越显眼）：
+     * ```
+     * 作业-数字电路与逻辑设计（一）
+     * 小测-信号与系统
+     * 作业-信号与系统·第九讲作业      ← 原标题与科目不同名时才追加
+     * ```
+     *
+     * 为什么把**类型放最前**：待办列表只显示一行，用户扫一眼要先分清
+     * 「这是作业还是小测还是考试」。类型放前面最省事。
+     *
+     * 为什么**科目**紧跟其后而不是原标题：科目是用户组织任务的维度
+     * （「数字电路那门课有什么要交」），原标题常常就是科目名的重复
+     * （雨课堂「第九讲作业」、课堂派「5.2 傅里叶积分…」都只说内容）。
+     *
+     * ★ 尾部的原标题只在**与科目不重复**时追加，避免出现
+     *   「作业-信号与系统·信号与系统」这种复读。
      */
     fun todoTitle(courseName: String, kind: String, title: String): String {
         val c = courseName.trim()
-        val k = kind.trim()
+        val k = kind.trim().ifBlank { "作业" }
         val t = title.trim()
-        return listOf(c, k, t).filter { it.isNotBlank() }.joinToString(" · ")
+        val head = if (c.isNotBlank()) "$k-$c" else if (t.isNotBlank()) "$k-$t" else k
+        // 标题已包含科目名（或就是科目名）时不再追加，否则追加在后面便于辨别具体哪一次。
+        val needTail = t.isNotBlank() && c.isNotBlank() &&
+            !t.contains(c) && !c.contains(t) && t != c
+        return if (needTail) "$head·$t" else head
     }
 
     /**
