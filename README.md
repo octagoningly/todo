@@ -669,11 +669,13 @@ main 的 `docs/PRIVACY.md` 是联网版，两者内容不同，别互相覆盖�
 - **课堂派**：走**原生 HTTP**（页面内跨域带 token 头会被 CORS 预检挡住），
   `token` 从 Cookie 取、放**自定义头**可用（放 body 不行）。课程列表是
   `data.topcourses[]`，课程 `id` 是字符串。
-- **雨课堂**：**没有独立的作业列表接口**，作业与考试只能从章节树按
-  `leaf_type`（5=考试、6=作业）筛；截止时间 `score_deadline` 是 Unix **毫秒**，
-  且 **`0` 表示「无限制」**（不是 1970 年）。
+- **雨课堂**：课程列表必须走**课堂端**的 `/v2/api/web/courses/list?identity=2`
+  加上 `/v2/api/web/classroom_archive`（已归档），二者相加才是界面上的全部；
+  `mooc-api/.../user-courses/` 是**学堂在线 MOOC 选课**接口，只含 MOOC 课，不能用来数课程。
+  作业与考试从章节树按 `leaf_type`（5=考试、6=作业）筛，**没有**独立的作业列表接口；
+  截止时间 `score_deadline` 是 Unix **毫秒**，且 **`0` 表示「无限制」**（不是 1970 年）。
 
-设计理由与待验证清单见 [DESIGN.md §70](DESIGN.md) 与 [§74](DESIGN.md)、[§75](DESIGN.md)。
+设计理由与待验证清单见 [DESIGN.md §70](DESIGN.md) 与 [§74](DESIGN.md)、[§75](DESIGN.md)、[§76](DESIGN.md)。
 
 该功能只在 main 派生的实验分支开发，`release/vivo-store` 不申请任何网络权限且处于软著申请冻结期，
 不会带入，也不发版。
@@ -685,7 +687,7 @@ main 的 `docs/PRIVACY.md` 是联网版，两者内容不同，别互相覆盖�
 | 文件 | 内容 |
 |---|---|
 | **[AGENTS.md](AGENTS.md)** | **项目开发规矩**：技术栈基线、新功能「旧模块 → Google 官方 → 开源参考 → 最后手写」四级顺序、UI 红线、双分支边界、发版两个源 + 博客文章的同步流程、改动收尾清单。**每次改动前先读** |
-| [DESIGN.md](DESIGN.md) | 设计决策、解析语义、踩过的坑与源码级结论（按版本追加，现至 §75） |
+| [DESIGN.md](DESIGN.md) | 设计决策、解析语义、踩过的坑与源码级结论（按版本追加，现至 §76） |
 | [docs/DEV-NOTES.md](docs/DEV-NOTES.md) | 2026-10-22 从项目记忆迁出的历史归档（只读） |
 | [docs/PRIVACY.md](docs/PRIVACY.md) | 权限清单与隐私政策（两个分支内容不同） |
 | [docs/BACKGROUND.md](docs/BACKGROUND.md) | 后台保活 / 精确闹钟 / 厂商兼容 |

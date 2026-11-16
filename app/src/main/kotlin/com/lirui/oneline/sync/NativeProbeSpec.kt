@@ -227,38 +227,61 @@ object NativeProbeSpec {
     }
 
     /**
-     * 雨课堂候选请求。`chapter` 需要 cid + sign，两门课都要扫（§73 只扫了第一门）。
+     * 雨课堂课程列表候选 —— **按优先级排列**，全都试一遍。
      *
-     * ★ §75：`term` 不能只试 `latest`。实测两门课共 17 个节点**全是课件**，
-     *   但「这门课没作业」与「作业在往期学期」是两件事 ——
-     *   `latest` 只取最新学期，历史学期要单独传 `term`。
+     * ★ §76 重大订正：`mooc-api/v1/lms/user/user-courses/` **不是**雨课堂课堂端的课程列表，
+     *   那是**学堂在线 MOOC 的选课接口**（字段 `product_list` / `course_sign` / `sku_id`
+     *   都是学堂在线的商品术语）。它只会返回你在学堂在线选过的课 ——
+     *   实测只有 2 门，而用户在界面上看到的课程明显更多，根因就在这。
+     *
+     *   课堂端真正的课程列表是 `/v2/api/web/courses/list?identity=2`（`identity=2` = 学生视角），
+     *   界面上的卡片数还等于它 **加上** `/v2/api/web/classroom_archive`（已归档/已结课）。
+     *   归档接口的数组在 `data.classrooms[]`，主键字段叫 `id` 而不是 `classroom_id`。
+     *
+     * 判读要点：`/v2/api/web/` 系列返回 **401 = 有路由但缺登录**，**404 才是路径错**。
      */
-    fun yuketangRequests(host: String, cookies: Map<String, String>): List<ProbeRequest> {
-        val headers = yuketangHeaders(cookies)
+    fun yuketangCourseListRequests(
+        host: String,
+        cookies: Map<String, String>
+    ): List<ProbeRequest> {
         val base = "https://$host"
+        val headers = yuketangHeaders(cookies, xtbz = "ykt", xClient = true)
         return listOf(
+            // ★ 主口径：课堂端学生课程列表。
             ProbeRequest(
-                name = "courses",
+                name = "courses-v2-identity2",
+                method = "GET",
+                url = "$base/v2/api/web/courses/list?identity=2",
+                headers = headers,
+                body = null,
+                tokenMode = "none"
+            ),
+            // 已归档 / 已结课课程，要**相加**才是界面上的全部。
+            ProbeRequest(
+                name = "courses-archive",
+                method = "GET",
+                url = "$base/v2/api/web/classroom_archive",
+                headers = headers,
+                body = null,
+                tokenMode = "none"
+            ),
+            // 对照：老接口（MOOC 选课），用来证明「两套是不同数据源」。
+            ProbeRequest(
+                name = "courses-mooc-legacy",
                 method = "GET",
                 url = "$base/mooc-api/v1/lms/user/user-courses/" +
                     "?status=1&page=1&no_page=1&term=latest",
-                headers = headers,
+                headers = yuketangHeaders(cookies),
                 body = null,
                 tokenMode = "none"
             )
         )
     }
 
-    /**
-     * 往期学期探测：`term=all` / 空 / 具体学期值各试一次，
-     * 用来区分「本课确实没有作业」和「作业不在当前学期」。
-     */
+    /** MOOC 接口的学期变体（保留做对照，值不再当作课程来源）。 */
     fun yuketangTermVariants(host: String, cookies: Map<String, String>): List<ProbeRequest> {
         val base = "https://$host/mooc-api/v1/lms/user/user-courses/"
-        return listOf(
-            "all",
-            ""
-        ).mapIndexed { i, term ->
+        return listOf("all", "").map { term ->
             val q = if (term.isEmpty()) "" else "term=$term"
             ProbeRequest(
                 name = "courses-term${if (term.isEmpty()) "none" else term}",
@@ -270,6 +293,72 @@ object NativeProbeSpec {
             )
         }
     }
+
+    /**
+     * 课程详情 / 活动时间轴 / 用户信息 —— 用来给课堂端课程补 `course_sign` 与 `uv_id`，
+     * 以及确认「这门课到底有没有作业类活动」。
+     */
+    fun yuketangCourseDetailRequests(
+        host: String,
+        cookies: Map<String, String>,
+        classroomId: String
+    ): List<ProbeRequest> {
+        val base = "https://$host"
+        val headers = yuketangHeaders(cookies, xtbz = "ykt", xClient = true)
+        return listOf(
+            ProbeRequest(
+                name = "classroom-$classroomId",
+                method = "GET",
+                url = "$base/v2/api/web/classrooms/$classroomId?role=5",
+                headers = headers,
+                body = null,
+                tokenMode = "none"
+            ),
+            // 活动时间轴：作业/考试会以 activity 形式出现，这是另一条独立线索。
+            // ★ 这个接口 `page` 从 0 开始，`offset` 含义是**每页条数**不是跳过条数。
+            ProbeRequest(
+                name = "logs-$classroomId",
+                method = "GET",
+                url = "$base/v2/api/web/logs/learn/$classroomId" +
+                    "?actype=-1&page=0&offset=200&sort=-1",
+                headers = headers,
+                body = null,
+                tokenMode = "none"
+            )
+        )
+    }
+
+    /** 用户信息：确认 `uv_id`（= university_id），章节树缺它可能回空。 */
+    fun yuketangUserInfoRequests(
+        host: String,
+        cookies: Map<String, String>
+    ): List<ProbeRequest> {
+        val base = "https://$host"
+        val headers = yuketangHeaders(cookies, xtbz = "ykt", xClient = true)
+        return listOf(
+            ProbeRequest("userinfo-v2", "GET", "$base/v2/api/web/userinfo", headers, null, "none"),
+            ProbeRequest("basic-info", "GET", "$base/api/v3/user/basic-info", headers, null, "none")
+        )
+    }
+
+    /**
+     * `c27` 章节进度接口：调研称可绕开 `mooc-api` 章节树的 80019 错误，
+     * 需要 `classroom_id` + `course_id`（后者在课程列表里叫 `course.id`）。
+     */
+    fun yuketangC27ProgressRequest(
+        host: String,
+        cookies: Map<String, String>,
+        classroomId: String,
+        courseId: String
+    ): ProbeRequest = ProbeRequest(
+        name = "c27-progress-$classroomId",
+        method = "GET",
+        url = "https://$host/c27/online_courseware/schedule/course/progress/" +
+            "?classroom_id=$classroomId&course_id=$courseId",
+        headers = yuketangHeaders(cookies, xtbz = "ykt", xClient = true),
+        body = null,
+        tokenMode = "none"
+    )
 
     /** 章节树：每门课一条。 */
     fun yuketangChapterRequest(

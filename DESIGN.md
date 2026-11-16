@@ -6115,3 +6115,110 @@ url=https://openapiv5.ketangpai.com/CourseApi/semesterList?token=893639c5...e52a
 2. 雨课堂 `term=all` 里有没有往期作业。
 3. 若雨课堂确认彻底没作业，就**只做课堂派**（它已经通了），
    雨课堂退成「仅登录、不抓取」，别为了对称把功能做坏。
+
+---
+
+## §76 ★ 根因找到：雨课堂用错了接口（2026-11-16 上午）
+
+### 76.1 用户的关键反馈
+
+> 「雨课堂昨天不是能抓到吗？实际上雨课堂里面的科目更多。课堂派里面的科目只有一科是本学期的。」
+
+三句话都推动了进展，逐条纠正：
+
+1. **「雨课堂能抓到吗」** —— 不能。§71–§73 那几轮**从没抓到过任何作业**，
+   当时试的 `user-tasks` / `exercise/list` 是接口不存在（404），不是抓取失败。
+   「登录成功」是另一件事，别记混。
+2. **「科目更多」** —— ★ **这条是根因**。界面上的课程明显多于接口返回的 2 门，
+   说明我们**看错了数据源**（见 76.2）。
+3. **「课堂派只有一科是本学期」** —— 查了，5 门课返回的 `semester=2025-2026, term=2`
+   **全都一样**，都是本学期。但用户的提醒本身是对的：判「本学期」要看
+   `semester` + `term` 字段，不能靠课程名猜。
+
+### 76.2 ★ 根因：`user-courses` 根本不是雨课堂的课程列表
+
+`mooc-api/v1/lms/user/user-courses/` 是**学堂在线 MOOC 的选课接口**，
+不是雨课堂课堂端（classroom）的课程列表。铁证：它回的 `product_list` / `course_sign` /
+`sku_id` 全是学堂在线的**商品术语**，与 `next.xuetangx.com/api/v1/lms/get_product_list/` 同源。
+
+**它只返回你在学堂在线「选过的 MOOC 课」** —— 所以永远只有 2 门，
+而你在雨课堂里正常上课的那些课**根本不在这个接口里**。
+
+真正在用的是**两个接口相加**：
+
+```
+GET /v2/api/web/courses/list?identity=2      ← 未归档（identity=2 是学生视角）
+GET /v2/api/web/classroom_archive            ← 已归档 / 已结课
+```
+
+`physicsdolphin/rainclassroom-scrapper` 源码写得很直白：
+
+```python
+courses = shown_courses['data']['list'] + hidden_courses['data']['classrooms']
+```
+
+注意归档接口的数组在 **`data.classrooms[]`**，主键叫 **`id`** 而不是 `classroom_id`。
+
+**判读技巧**：`/v2/api/web/` 系列回 **401 = 有路由但缺登录**，**404 才是路径错**。
+这个区分是本次定位能成立的前提。
+
+### 76.3 顺着这条线还澄清了一批参数
+
+| 项 | 结论 |
+| --- | --- |
+| `term=all` | **不是合法值**。合法是 `latest` 或数字学期（`202401`）。这解释了 §75「all/latest/不带 三者一样」—— 非法值被忽略、回落到默认，不是「作业不在往期」 |
+| `status` | 只有 `status=1` 有实际使用证据，语义「进行中」；0/2/3 未找到证据 |
+| `role=5` | 是**返回字段**（学生），不是入参；入参是 `identity=2` |
+| `uv_id` | 就是 `university_id`，真实存在 |
+| `xtbz` | `ykt` 与 `cloud` **不等价**；错误码 80005 的官方处置建议是「把 cloud 换成 ykt」。课堂端 `/v2/api/web/` 用 `ykt` |
+
+★ 教训：**「参数都试一遍」救不了「接口选错了」**。
+§75 我试了 `term=all` / 不带 `term`，看到三者相同就下了「往期学期也没作业」的结论 ——
+而真相是这个接口压根不该用来数课程。**先确认数据源对不对，再调参数。**
+
+### 76.4 课堂派：数据完全可用（这次是真的通到底）
+
+5 门课逐个打了 `getCourseContent`，`contenttype=4`（作业）/ `6`（考试），全部 200：
+
+| 课程 | 作业 | 考试 |
+| --- | --- | --- |
+| 模拟电路 | **10** | 0 |
+| AI+口译Wed | **17** | 0 |
+| 大学物理（理）下 | **15** | **2** |
+| 2026春-线性代数 | **10** | **2** |
+| 思想道德与法治 | 0 | 0 |
+
+字段质量（正好是待办要的三个）：
+
+```
+title      = "模拟电路第十次作业"
+endtime    = 1782274380 → 2026-06-24 12:13:00    Unix 秒
+begintime  = 1782180900 → 2026-06-23 10:15:00    考试开始
+timelength = 2400                                 考试时长（秒）
+publishtype= 2 → 考试
+```
+
+★ 观察到一个**要在映射时当心**的现象：多条 `endtime` 落在 `00:23` / `00:53` / `00:31`。
+这通常是老师把截止设为「当天 23:59」而平台按次日 0 点存，也可能是平台自身的时区处理。
+落到待办时应**按日期取当天结束**，不要显示成凌晨，否则用户会以为「半夜截止」。
+
+### 76.5 本轮代码改动
+
+| 文件 | 改动 |
+| --- | --- |
+| `NativeProbeSpec` | 新增 `yuketangCourseListRequests`（课堂端两接口 + MOOC 对照）、`yuketangCourseDetailRequests`（课程详情 / 活动时间轴）、`yuketangUserInfoRequests`、`yuketangC27ProgressRequest`；课堂端统一 `xtbz=ykt` + `x-client` |
+| `NativeProbeRunner` | 课程池改为「课堂端两接口合并 + 按 classroom_id 去重」；新增 `parseWebCourses`（兼容 `data.list` / `data.classrooms` 与 `id` / `classroom_id` 两种主键）；摘要分开报「课程来源」 |
+| `SourceHygieneTest` | ★ 新增：扫描块注释深度，防「注释里写斜杠加星号」导致的嵌套（本项目已栽三次） |
+
+### 76.6 验证
+
+- `:app:testDebugUnitTest` **441 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**；
+  `adb install -r` **Success**（2026-11-16 10:28:34），仍是 1.0.14 / 48，数据保留。
+- 探针输出已确认**无 token 明文**（4 个文件均 0 处；打码处 1 处），§75 的修复生效。
+- `app/build.gradle.kts` 零 diff。
+
+### 76.7 待验证
+
+用户再点一次「抓作业」，看 `courseSourceCounts`：
+- `courses-v2-identity2` 与 `courses-archive` 各几门 —— 加起来应等于界面上的课程数。
+- 若课堂端课程数 > 2，则雨课堂的章节树终于能覆盖到真正在上的课，`leaf_type=6/5` 才有机会出现。

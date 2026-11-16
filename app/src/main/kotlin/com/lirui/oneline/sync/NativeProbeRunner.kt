@@ -201,28 +201,50 @@ object NativeProbeRunner {
             .put("probeHeaders", "xtbz,x-csrftoken,Cookie")
 
         val results = org.json.JSONArray()
-        val coursesRes = execute(NativeProbeSpec.yuketangRequests(host, cookies).first())
-        results.put(coursesRes)
 
-        val courses = parseYuketangCourses(coursesRes.optString("sample"))
+        // ★ §76：课程列表走**课堂端**的两个接口，不再是 MOOC 选课接口。
+        //   界面上的课程 = courses/list（未归档） + classroom_archive（已归档）。
+        var courses: List<Triple<String, String, String?>> = emptyList()
+        val courseSources = JSONObject()
+        for (req in NativeProbeSpec.yuketangCourseListRequests(host, cookies)) {
+            val res = execute(req)
+            results.put(res)
+            val text = res.optString("sample")
+            val parsed = if (req.name.startsWith("courses-v2") ||
+                req.name.startsWith("courses-archive")
+            ) {
+                parseWebCourses(text)
+            } else {
+                // MOOC 老接口只作对照，不并进课程池。
+                emptyList()
+            }
+            courseSources.put(req.name, parsed.size)
+            // 归档接口的数组在 data.classrooms[]，主键叫 id —— parseWebCourses 已兼容两种形态。
+            if (parsed.isNotEmpty()) courses = (courses + parsed).distinctBy { it.first }
+        }
+        root.put("courseSourceCounts", courseSources)
         root.put("courseCount", courses.size)
+        val courseArr = org.json.JSONArray()
+        courses.forEach { courseArr.put("${it.second}(${it.first})") }
+        root.put("courses", courseArr)
 
-        // ★ §75：往期学期也要看一眼 —— `term=latest` 只取最新学期，
-        //   「本课没作业」与「作业在上学期」必须分开判。
+        // 用户信息：确认 uv_id，章节树缺它可能回空。
+        for (req in NativeProbeSpec.yuketangUserInfoRequests(host, cookies)) {
+            results.put(execute(req))
+        }
+
+        // 老接口的学期变体保留做对照（证明「两套是不同数据源」）。
         val termCounts = JSONObject()
         for (req in NativeProbeSpec.yuketangTermVariants(host, cookies)) {
             val res = execute(req)
             results.put(res)
-            val list = parseYuketangCourses(res.optString("sample"))
-            termCounts.put(req.name, list.size)
-            val arr = org.json.JSONArray()
-            list.forEach { arr.put("${it.second}(${it.first})") }
-            root.put(req.name, arr)
+            termCounts.put(req.name, parseYuketangCourses(res.optString("sample")).size)
         }
         root.put("termCounts", termCounts)
 
         val allNodes = org.json.JSONArray()
         courses.forEachIndexed { i, c ->
+            // 章节树：课堂端课程的 sign 可能为空，照发（接口对空 sign 也能回）。
             val chapter = execute(
                 NativeProbeSpec.yuketangChapterRequest(
                     host, cookies, i, c.first, c.third
@@ -231,8 +253,11 @@ object NativeProbeRunner {
             results.put(chapter)
             val nodes = parseYuketangNodes(chapter.optString("sample"), c.second)
             for (n in nodes) allNodes.put(n)
-            // 日程接口（存疑候选）：每门课打一次，确认是否含截止时间聚合。
             results.put(execute(NativeProbeSpec.yuketangScheduleRequest(host, cookies, c.first, c.third)))
+            // 活动时间轴：作业/考试会以 activity 形式出现，是独立于章节树的第二条线索。
+            for (req in NativeProbeSpec.yuketangCourseDetailRequests(host, cookies, c.first)) {
+                results.put(execute(req))
+            }
         }
 
         root.put("nodes", allNodes)
@@ -323,11 +348,56 @@ object NativeProbeRunner {
             "${r.optString("name")} ${r.optInt("status")}"
         }
         lines += "接口：${parts.joinToString(" / ")}"
+        // ★ §76：课程来源要分开报 —— 「课堂端 N 门」与「MOOC 选课 M 门」是两套数据，
+        //   上一版只看 MOOC，于是以为用户只有 2 门课。
+        val src = root.optJSONObject("courseSourceCounts")
+        if (src != null) {
+            val kv = src.keys().asSequence().joinToString(" / ") { "$it=${src.optInt(it)}" }
+            lines += "课程来源：$kv"
+        }
         lines += "课程数：${root.optInt("courseCount")} / 节点：${root.optJSONArray("nodes")?.length() ?: 0}" +
             " / leaf_type $leafCounts"
         lines += "作业 ${root.optInt("homeworkCount")} 个 / 考试 ${root.optInt("examCount")} 个" +
             " / 有绝对截止 $withDeadline 个"
         return lines.joinToString("\n")
+    }
+
+    /**
+     * 课堂端课程列表解析，**同时兼容两种结构**（§76 调研给出）：
+     *
+     * - `/v2/api/web/courses/list?identity=2` → `data.list[]`，
+     *   每项有 `classroom_id`、`name`、`course.id` / `course.name`、`term`(数字)、`role`。
+     * - `/v2/api/web/classroom_archive` → `data.classrooms[]`，
+     *   ★ 主键字段叫 **`id`** 而不是 `classroom_id`，要自己映射，
+     *     而且 `name` 是课堂名、课程名在 `course.name`。
+     *
+     * 返回 (classroom_id, 课程名, course_sign)。课堂端不给 `course_sign`，
+     * 所以第三项基本为 null —— 章节树对空 sign 也能回。
+     */
+    fun parseWebCourses(json: String?): List<Triple<String, String, String?>> {
+        if (json.isNullOrBlank()) return emptyList()
+        val obj = runCatching { JSONObject(json) }.getOrNull() ?: return emptyList()
+        val data = obj.optJSONObject("data") ?: return emptyList()
+        // 未归档在 data.list，归档在 data.classrooms —— 两个都试，谁有读谁。
+        val arr = data.optJSONArray("list") ?: data.optJSONArray("classrooms")
+            ?: return emptyList()
+        val out = mutableListOf<Triple<String, String, String?>>()
+        for (i in 0 until arr.length()) {
+            val c = arr.optJSONObject(i) ?: continue
+            // 归档接口用 `id`，未归档用 `classroom_id`。
+            val cid = c.optLong("classroom_id", 0L).takeIf { it > 0L }
+                ?: c.optLong("id", 0L).takeIf { it > 0L }
+                ?: c.optString("classroom_id").toLongOrNull()?.takeIf { it > 0L }
+                ?: c.optString("id").toLongOrNull()?.takeIf { it > 0L }
+                ?: continue
+            val course = c.optJSONObject("course")
+            val name = course?.optString("name")?.takeIf { it.isNotBlank() }
+                ?: c.optString("name").takeIf { it.isNotBlank() }
+                ?: c.optString("course_name")
+            val sign = c.optString("course_sign").ifBlank { null }
+            out += Triple(cid.toString(), name, sign)
+        }
+        return out
     }
 
     /**

@@ -94,10 +94,34 @@ class NativeProbeSpecTest {
     // ---- 雨课堂请求规格 ----
 
     @Test
-    fun `yuketang always sends xtbz cloud`() {
-        val reqs = NativeProbeSpec.yuketangRequests("www.yuketang.cn", mapOf("csrftoken" to "c"))
-        assertTrue(reqs.first().headers.any { it.first == "xtbz" && it.second == "cloud" })
-        assertTrue(reqs.first().headers.any { it.first == "x-csrftoken" && it.second == "c" })
+    fun `yuketang course list uses classroom endpoints not mooc`() {
+        // ★ §76：主口径必须是课堂端的 courses/list 与 classroom_archive，
+        //   MOOC 的 user-courses 只作对照组。
+        val reqs = NativeProbeSpec.yuketangCourseListRequests(
+            "www.yuketang.cn", mapOf("csrftoken" to "c")
+        )
+        val names = reqs.map { it.name }
+        assertEquals(
+            listOf("courses-v2-identity2", "courses-archive", "courses-mooc-legacy"),
+            names
+        )
+        val main = reqs.first { it.name == "courses-v2-identity2" }
+        assertTrue(main.url.endsWith("/v2/api/web/courses/list?identity=2"))
+        val archive = reqs.first { it.name == "courses-archive" }
+        assertTrue(archive.url.endsWith("/v2/api/web/classroom_archive"))
+        // 课堂端接口用 xtbz=ykt（错误码 80005 的官方建议）。
+        assertTrue(main.headers.any { it.first == "xtbz" && it.second == "ykt" })
+        assertTrue(main.headers.any { it.first == "x-client" })
+    }
+
+    @Test
+    fun `yuketang headers carry csrftoken and cookie`() {
+        val reqs = NativeProbeSpec.yuketangCourseListRequests(
+            "www.yuketang.cn", mapOf("csrftoken" to "c", "sessionid" to "s")
+        )
+        val main = reqs.first()
+        assertTrue(main.headers.any { it.first == "x-csrftoken" && it.second == "c" })
+        assertTrue(main.headers.any { it.first == "Cookie" && it.second.contains("sessionid=s") })
     }
 
     @Test
