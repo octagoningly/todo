@@ -42,6 +42,21 @@ interface TodoDao {
     @Query("UPDATE todos SET archived = 0 WHERE id = :id")
     suspend fun unarchiveById(id: Long)
 
+    // ---------- 作业自动导入（v9 / §85）----------
+
+    /**
+     * 按「来源平台 + 平台编号」找已导入过的待办，用于去重。
+     *
+     * ★ 只比对**没删过**的记录（含已归档）：已完成的作业不该被重新导入一遍。
+     *   老数据 `source`/`externalId` 都是空串，永远不会命中，行为零变化。
+     */
+    @Query("SELECT * FROM todos WHERE source = :source AND externalId = :externalId LIMIT 1")
+    suspend fun findByExternal(source: String, externalId: String): Todo?
+
+    /** 返回所有已导入过的平台编号，导入前一次性取回，避免逐条查库。 */
+    @Query("SELECT externalId FROM todos WHERE source = :source AND externalId != ''")
+    suspend fun externalIdsOf(source: String): List<String>
+
     @Query("UPDATE todos SET title = :title, detail = :detail, tag = :tag, dueAtMillis = :dueAtMillis, startAtMillis = :startAtMillis, endAtMillis = :endAtMillis, hasExactTime = :hasExactTime, repeatDays = :repeatDays WHERE id = :id")
     suspend fun updateContent(id: Long, title: String, detail: String, tag: String, dueAtMillis: Long?, startAtMillis: Long?, endAtMillis: Long?, hasExactTime: Boolean, repeatDays: Int)
 

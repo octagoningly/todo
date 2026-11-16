@@ -52,5 +52,20 @@ data class Todo(
     /** 见类注释：未使用的历史列，只为保住 DB 版本号。 */
     @ColumnInfo(defaultValue = "NULL") val deletedAt: Long? = null,
     /** v1.0.15 语义标签；DB v7→v8 加列，老数据默认空串。 */
-    @ColumnInfo(defaultValue = "") val tag: String = ""
+    @ColumnInfo(defaultValue = "") val tag: String = "",
+    /**
+     * ★ §85 作业自动导入：这条待办来自哪个平台。
+     * 空串 = 用户自己写的（绝大多数）；`ketangpai` / `yuketang` = 自动导入。
+     *
+     * DB v8→v9 加列，老数据默认空串，行为零变化。
+     * 与 [externalId] 一起构成去重键（见 `SyncRules.dedupeKey`）。
+     */
+    @ColumnInfo(defaultValue = "") val source: String = "",
+    /**
+     * ★ §85 平台侧作业的唯一编号（课堂派是 Base64 风格字符串，雨课堂是数字 id）。
+     *
+     * 用途：**同一条作业重复导入时能认出来**，而不是每次同步都加一条新的。
+     * 空串 = 非导入来源。同一平台内唯一即可，不与别的平台比较。
+     */
+    @ColumnInfo(defaultValue = "") val externalId: String = ""
 )

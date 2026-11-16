@@ -11,7 +11,7 @@ import com.lirui.oneline.data.model.Todo
 
 @Database(
     entities = [Todo::class, FocusSession::class],
-    version = 8,
+    version = 9,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -123,6 +123,28 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v8 → v9（§85）：作业自动导入需要记住「这条待办来自哪个平台、平台编号是多少」。
+         *
+         * ★ 加两列，都是 `TEXT NOT NULL DEFAULT ''`，与实体上的
+         *   `@ColumnInfo(defaultValue = "")` **逐字对齐**。
+         *   少写 DEFAULT 时 PRAGMA 的 dflt_value 是空、Room 校验直接抛异常
+         *   → 启动即崩（0.9.3 那次血的教训，见 [MIGRATION_4_5]）。
+         * ★ 幂等：迁移中途失败但没回滚的设备列可能已存在，先查 PRAGMA 再加。
+         * ★ 老数据全部落成空串 = 「用户自己写的、无平台编号」，
+         *   去重逻辑据此把老数据排除在外，**行为零变化**。
+         */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                if (!hasColumn(db, "todos", "source")) {
+                    db.execSQL("ALTER TABLE todos ADD COLUMN source TEXT NOT NULL DEFAULT ''")
+                }
+                if (!hasColumn(db, "todos", "externalId")) {
+                    db.execSQL("ALTER TABLE todos ADD COLUMN externalId TEXT NOT NULL DEFAULT ''")
+                }
+            }
+        }
+
         private fun hasColumn(db: SupportSQLiteDatabase, table: String, column: String): Boolean {
             db.query("PRAGMA table_info($table)").use { cursor ->
                 val nameIndex = cursor.getColumnIndex("name")
@@ -141,7 +163,8 @@ abstract class AppDatabase : RoomDatabase() {
          */
         val ALL_MIGRATIONS = arrayOf(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
-            MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8
+            MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8,
+            MIGRATION_8_9
         )
 
         fun get(context: Context): AppDatabase {

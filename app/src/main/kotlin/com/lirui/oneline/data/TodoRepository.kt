@@ -24,8 +24,62 @@ class TodoRepository(private val context: Context) {
     val active: Flow<List<Todo>> = dao.observeActive()
     val archived: Flow<List<Todo>> = dao.observeArchived()
 
-    suspend fun addFromParsed(parsed: ParsedTodo): Long {
-        val due = parsedToDue(parsed)
+    /**
+     * ★ §85 作业自动导入：把平台作业写进待办。
+     *
+     * 与 [addFromParsed] 分开，**不动**那条被多处调用的老路径。
+     *
+     * 三条设计约束：
+     * 1. **去重**：已存在同 `source + externalId` 的直接跳过并计入 skipped，
+     *    绝不重复插入，也**绝不覆盖用户手改过的条目**（§70 就定过这条）。
+     * 2. **排提醒**：复用 [ReminderScheduler.scheduleBlocking]（唯一入口），
+     *    否则导入的作业到点不会响，等于白导。
+     * 3. **已过期的**由调用方（[com.lirui.oneline.sync.ImportRules]）先滤掉，
+     *    这里不再判，避免两套口径。
+     *
+     * @return (新建条数, 因重复跳过条数)
+     */
+    suspend fun importHomework(
+        items: List<com.lirui.oneline.sync.ImportRules.ImportItem>
+    ): Pair<Int, Int> {
+        if (items.isEmpty()) return 0 to 0
+        var added = 0
+        var skipped = 0
+        // 同一平台已导入过的编号，一次性取回，避免逐条查库。
+        val known = HashMap<String, MutableSet<String>>()
+        items.forEach { item ->
+            val source = item.platform.id
+            val existing = known.getOrPut(source) {
+                dao.externalIdsOf(source).toMutableSet()
+            }
+            if (item.externalId in existing) {
+                skipped++
+                return@forEach
+            }
+            val title = com.lirui.oneline.sync.ImportRules.todoTitle(
+                item.courseName, item.kind, item.title
+            )
+            val id = dao.insert(
+                Todo(
+                    title = title,
+                    detail = "",
+                    dueAtMillis = item.deadlineMillis,
+                    hasExactTime = true,
+                    source = source,
+                    externalId = item.externalId
+                )
+            )
+            existing += item.externalId
+            added++
+            // 排提醒：与手动添加同一条路径，精确时刻 + 开始日/结束日都传。
+            ReminderScheduler.scheduleBlocking(
+                context, id, item.deadlineMillis, true, null, null
+            )
+        }
+        return added to skipped
+    }
+
+    suspend fun addFromParsed(parsed: ParsedTodo): Long {        val due = parsedToDue(parsed)
         val start = parsedToStart(parsed)
         val end = parsedToEnd(parsed)
         val id = dao.insert(Todo(
