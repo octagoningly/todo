@@ -42,18 +42,35 @@ import com.lirui.oneline.sync.SyncRules
 import com.lirui.oneline.ui.theme.Text
 
 /**
- * §70.10 纯布局修正：雨课堂 PC 登录页把 `html` / `body` 锁成固定高度，
- * 二维码贴在视口最顶、被系统状态栏切掉，而且页面**滚不动**。
- * 这里只解锁纵向滚动并给顶部留一条空白，让内容能上下移动；
- * 不读输入框、不拦表单、不取任何页面数据。
+ * ★ §77 已撤掉旧的「整体解锁滚动」注入。
+ *
+ * 旧版（§70.10）做的是：
+ * ```
+ * html.style.height = 'auto'; body.style.height = 'auto';
+ * html.style.overflowY = 'auto'; body.style.overflowY = 'auto';
+ * body.style.paddingTop = '56px';
+ * ```
+ * 目的是让被锁死的 PC 登录页能上下滑、并躲开系统状态栏。**但它有两个真问题**：
+ *
+ * 1. **把 SPA 的内部滚动区顶塌了**。雨课堂是 Vue 应用，布局依赖
+ *    「外层固定高度 + 内部容器滚动」。把 `html` / `body` 改成 `height:auto` 后，
+ *    内层的高度约束消失、滚不动 → 用户看到的就是
+ *    「『我教的课 / 我听的课』下面直接接导航栏，中间本该有可滑动的课程区却是一片空」。
+ * 2. `paddingTop: 56px` 是当年为了躲系统状态栏加的，**后来已经从布局层
+ *    用 `statusBarsPadding()` 解决了**（见本文件 `Dialog` 里的那个 modifier），
+ *    这一行纯属多余的副作用，还平白把页面往下推 56px。
+ *
+ * 现在只做一件**最小侵入**的事：给 `body` 留出底部安全区，
+ * 避免内容被我们自己的底部按钮条挡住。不再碰 `height` / `overflow`。
  */
 private const val SCROLL_FIX_JS = """
 (function(){
   try {
-    var h = document.documentElement, b = document.body;
-    if (h) { h.style.overflowY = 'auto'; h.style.height = 'auto'; }
-    if (b) { b.style.overflowY = 'auto'; b.style.height = 'auto';
-             b.style.paddingTop = '56px'; }
+    var b = document.body;
+    if (b) {
+      // 只补底部留白：底部浮动按钮条约 48dp，换算成 CSS 像素留 72px 保险。
+      b.style.paddingBottom = '72px';
+    }
   } catch (e) {}
 })();
 """
@@ -132,10 +149,16 @@ fun HomeworkSyncLoginDialog(
                         settings.setSupportZoom(true)
                         settings.builtInZoomControls = true
                         settings.displayZoomControls = false
+                        // ★ §77：去掉默认 UA 里的 `; wv` 标记。
+                        //   WebView 默认 UA 形如 `... Chrome/xx ...; wv) ...`，
+                        //   不少站点（含雨课堂）据此判定「这是内嵌浏览器」并降级、
+                        //   或直接返回与真机浏览器不同的布局 —— 课程区塌陷很可能与此有关。
+                        //   只改 UA 字符串，不伪装成别的设备型号，页面仍是平台自己的官方页。
+                        settings.userAgentString = settings.userAgentString
+                            ?.replace("; wv)", ")")
                         webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView?, finishedUrl: String?) {
-                                // 每次页面加载完都补一次布局修正：SPA 切页 / 重定向后
-                                // 页面可能重新把 overflow 锁回去。
+                                // 只在页面加载完后补一次底部留白，不再动 height / overflow。
                                 view?.evaluateJavascript(SCROLL_FIX_JS, null)
                             }
                         }
@@ -163,6 +186,13 @@ fun HomeworkSyncLoginDialog(
             ) {
                 TextButton(onClick = onDismiss) { Text("关闭") }
                 TextButton(onClick = { relogin() }) { Text("重登") }
+                // ★ §77：让用户能自己走到课程页再抓。
+                //   之前探针只能在登录页上跑，DOM 体检自然看到的是登录表单，
+                //   拿不到「我教的课 / 我听的课」这些真实内容。
+                //   这里只做一次导航，不注入任何脚本、不改页面。
+                TextButton(onClick = {
+                    webViewRef?.loadUrl(SyncRules.loginUrl(platform, host).substringBefore("?"))
+                }) { Text("课程页") }
                 TextButton(onClick = {
                     val web = webViewRef ?: return@TextButton
                     Toast.makeText(

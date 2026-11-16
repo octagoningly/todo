@@ -91,6 +91,18 @@ object ProbeJs {
     P.summary+='\nCookie token：'+(P.cookieTokenFound?'找到':'没找到')+
                ' / 凭证键名：local['+P.credentials.localKeys.slice(0,8).join(',')+
                '] cookie['+P.credentials.cookieKeys.slice(0,8).join(',')+']';
+    // ★ §77 页面体检：先看页面本身对不对，再看接口。
+    if(P.domUrl){
+      P.summary+='\n页面：'+(P.domTitle||'无标题')+' / 正文 '+(P.domBodyLen||0)+' 字'+
+                 ' / 课程卡片 '+P.domCardCount+' 个';
+      var dk=[];
+      for(var q in (P.domKeywords||{})) dk.push(q+(P.domKeywords[q]?'✓':'✗'));
+      P.summary+='\n页面关键词：'+dk.join(' ');
+      if(P.domCardNames&&P.domCardNames.length){
+        P.summary+='\n页面课程卡片：'+P.domCardNames.slice(0,8).join(' | ');
+      }
+      if(P.domSnippet) P.summary+='\n页面正文片段：'+P.domSnippet.slice(0,160);
+    }
     P.state='done';
   }
 """
@@ -164,6 +176,13 @@ object ProbeJs {
     /**
      * 雨课堂：`xtbz:cloud` 必需。遍历**全部**课程（上一版只扫第一门），
      * 汇总所有章节节点的 leaf_type / end_time / score_deadline。
+     *
+     * ★ §77 新增 DOM 体检：用户在真机上看到「我教的课 / 我听的课」下面
+     *   **本该有可滑动的课程区却是一片空**，而接口侧课程数也不对（只有 2 门 MOOC）。
+     *   这两件事可能同源：页面没渲染出来 ⇒ 我们抓到的会话/布局本身就不对。
+     *   这里顺带把**页面里真实存在的课程名**从 DOM 里捞出来，与接口结果对照 ——
+     *   如果 DOM 里有「复变函数」「数学物理方法」而接口没有，就能确定是接口选错；
+     *   如果两边都没有，就要怀疑页面根本没加载完/被拦截。
      */
     private const val YUKETANG = """
   var base=location.origin;
@@ -175,6 +194,32 @@ object ProbeJs {
     if(m2) H['university-id']=m2[1];
   }catch(e){}
   P.probeHeaders=Object.keys(H);
+  // DOM 体检：页面里到底有没有课程卡片。
+  P.domUrl=location.href;
+  P.domTitle=document.title;
+  P.domUa=(navigator.userAgent||'').slice(0,200);
+  P.domBodyLen=(document.body&&document.body.innerText||'').length;
+  (function(){
+    try{
+      var txt=(document.body&&document.body.innerText)||'';
+      var KW=['复变函数','数学物理方法','我教的课','我听的课','我的课程','学期'];
+      P.domKeywords={};
+      for(var i=0;i<KW.length;i++){
+        P.domKeywords[KW[i]]=txt.indexOf(KW[i])>=0;
+      }
+      // 抓一段正文开头，便于判断页面是「正常课程页」还是「登录页/空白页」。
+      P.domSnippet=txt.replace(/\s+/g,' ').slice(0,600);
+      // 统计疑似课程卡片的节点数（雨课堂用 data-* 或 class 含 course）。
+      var nodes=document.querySelectorAll('[class*=course],[data-courseid],[class*=classroom]');
+      P.domCardCount=nodes.length;
+      var names=[];
+      for(var j=0;j<nodes.length&&names.length<20;j++){
+        var t=(nodes[j].innerText||'').split('\n')[0].trim();
+        if(t&&t.length<40) names.push(t);
+      }
+      P.domCardNames=names;
+    }catch(e){ P.domError=String(e); }
+  })();
   (async function(){
     var r=await req('courses',base+'/mooc-api/v1/lms/user/user-courses/?status=1&page=1&no_page=1&term=latest',{headers:H});
     var courses=[];

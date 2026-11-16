@@ -134,6 +134,78 @@ object NativeProbeSpec {
         """{"isstudy":1,"search":"","semester":"","term":""}"""
 
     /**
+     * 课堂派「按学期查」候选（§77）。
+     *
+     * ★ 现象：`semesterList` 只回 5 门课，**全是 `semester=2025-2026, term=2`**
+     *   （上学期），而当前是 2026-2027 学年第一学期。用户本学期的
+     *   「复变函数」「数学物理方法」一门都没出现。`data.semester` 还回了空数组，
+     *   本应是可选学期列表。
+     *
+     * 所以这里把「能想到的学期筛选写法」全试一遍：
+     * 显式传学期、切 `isstudy`、换 `semesterCourseList` 入口、以及不带筛选的完整列表。
+     */
+    fun ketangpaiSemesterRequests(
+        credential: Credential,
+        cookieHeader: String?
+    ): List<ProbeRequest> {
+        val host = KETANGPAI_API_HOSTS.first()
+        val headers = mutableListOf<Pair<String, String>>()
+        cookieHeader?.let { headers += "Cookie" to it }
+        headers += "Content-Type" to JSON
+        headers += "token" to credential.token
+
+        // 当前学年（2026-2027 第一学期）的两种常见写法。
+        val semesters = listOf("2026-2027" to "1", "2026-2027" to "0")
+        val out = mutableListOf<ProbeRequest>()
+
+        // A：显式带学期字段打 semesterList。
+        semesters.forEachIndexed { i, (sem, term) ->
+            out += ProbeRequest(
+                name = "semesterList-explicit-$i",
+                method = "POST",
+                url = "$host/CourseApi/semesterList",
+                headers = headers,
+                body = "{\"isstudy\":\"0\",\"search\":\"\"," +
+                    "\"semester\":\"$sem\",\"term\":\"$term\"}",
+                tokenMode = "header"
+            )
+        }
+        // B：`isstudy=1` —— 现在用的是 0，试另一档。
+        out += ProbeRequest(
+            name = "semesterList-isstudy1",
+            method = "POST",
+            url = "$host/CourseApi/semesterList",
+            headers = headers,
+            body = "{\"isstudy\":\"1\",\"search\":\"\"}",
+            tokenMode = "header"
+        )
+        // C：拿学期下拉列表的候选入口（data.semester 现在是空数组）。
+        listOf("semesterAll", "getSemester", "semester").forEach { ep ->
+            out += ProbeRequest(
+                name = "sem-$ep",
+                method = "POST",
+                url = "$host/CourseApi/$ep",
+                headers = headers,
+                body = "{}",
+                tokenMode = "header"
+            )
+        }
+        // D：`semesterCourseList` 显式指定学期。
+        semesters.forEachIndexed { i, (sem, term) ->
+            out += ProbeRequest(
+                name = "semesterCourseList-$i",
+                method = "POST",
+                url = "$host/CourseApi/semesterCourseList",
+                headers = headers,
+                body = "{\"isstudy\":1,\"search\":\"\"," +
+                    "\"semester\":\"$sem\",\"term\":\"$term\"}",
+                tokenMode = "header"
+            )
+        }
+        return out
+    }
+
+    /**
      * 课堂派候选请求。
      *
      * 第一组是**鉴权方式的四选一**（都打 `semesterList`，最短路径、最快判定）；

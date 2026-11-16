@@ -128,6 +128,25 @@ object NativeProbeRunner {
         courses.forEach { namesArr.put("${it.second} / ${it.third}") }
         root.put("courses", namesArr)
 
+        // ★ §77：`semesterList` 只回上学期（2025-2026 term=2）的课，
+        //   本学期的「复变函数」「数学物理方法」一门都没有。这里把学期筛选的几种写法
+        //   全试一遍，看哪条能拿到本学期。
+        val semProbe = JSONObject()
+        for (req in NativeProbeSpec.ketangpaiSemesterRequests(credential, cookieHeader)) {
+            val res = execute(req)
+            val text = res.optString("sample")
+            val list = parseKetangpaiCoursesWithSemester(text)
+            semProbe.put(req.name, "${res.optInt("status")}/${list.size}门")
+            results.put(res)
+            // 一旦某一组出现了新的课程（与 5 门基线不同），记下来。
+            if (list.isNotEmpty()) {
+                val arr = org.json.JSONArray()
+                list.take(12).forEach { arr.put("${it.second}(${it.third})") }
+                semProbe.put("${req.name}_courses", arr)
+            }
+        }
+        root.put("semesterProbe", semProbe)
+
         // ★ 作业/考试：对**每门课**都取一次，避免「第一门没作业就下结论」。
         courses.take(6).forEach { c ->
             for (req in NativeProbeSpec.ketangpaiContentRequests(
@@ -187,6 +206,28 @@ object NativeProbeRunner {
     /** 保留旧名给探针主体用：取第一门课的 id。 */
     fun parseKetangpaiCourseId(json: String?): String? =
         parseKetangpaiCourses(json).firstOrNull()?.first
+
+    /**
+     * 带学期信息的课程解析（§77）。
+     *
+     * ★ 目的：判断「本学期有没有课」。返回 (id, 课程名, "semester/term")。
+     *   实测基线是 5 门课全为 `2025-2026/2`（上学期），
+     *   本学期的「复变函数」「数学物理方法」应当出现在别的学期值下。
+     */
+    fun parseKetangpaiCoursesWithSemester(json: String?): List<Triple<String, String, String>> {
+        if (json.isNullOrBlank()) return emptyList()
+        val obj = runCatching { JSONObject(json) }.getOrNull() ?: return emptyList()
+        val data = obj.optJSONObject("data") ?: return emptyList()
+        val list = data.optJSONArray("topcourses") ?: return emptyList()
+        val out = mutableListOf<Triple<String, String, String>>()
+        for (i in 0 until list.length()) {
+            val c = list.optJSONObject(i) ?: continue
+            val id = c.optString("id").ifBlank { continue }
+            val sem = "${c.optString("semester")}/${c.optString("term")}"
+            out += Triple(id, c.optString("coursename"), sem)
+        }
+        return out
+    }
 
     // ---------------------------------------------------------------------
     // 雨课堂
