@@ -78,16 +78,18 @@ class SyncRulesTest {
 
     @Test
     fun `loginUrl and cookieHosts follow the selected school host`() {
-        // ★ §79：雨课堂改走**移动版** /m/v2。
-        //   原来用 PC 版 /web?type=3，手机上二维码被裁一半，
-        //   为此先后加过两轮 CSS 注入去「修布局」，两次都把 SPA 滚动容器顶塌。
-        //   平台自己的移动版页面无需任何注入即可正常显示课程列表（实测 195 个卡片）。
+        // ★ §80：入口回到明确的登录页 /web?type=3。
+        //
+        // §79 曾改成移动版 /m/v2，但实测**未登录时 /m/v2 会被 302**
+        // 到 `https://www.yuketang.cn/web/?next=/m/v2&type=3` —— 还是 PC 登录页。
+        // 所以换入口绕不开 PC 布局，真正的修复在 WebView 缩放策略：
+        // useWideViewPort + loadWithOverviewMode 把整页缩进一屏，二维码才不被裁。
         assertEquals(
-            "https://www.yuketang.cn/m/v2",
+            "https://www.yuketang.cn/web?type=3",
             SyncRules.loginUrl(SyncPlatform.YUKETANG, "www.yuketang.cn")
         )
         assertEquals(
-            "https://nk.yuketang.cn/m/v2",
+            "https://nk.yuketang.cn/web?type=3",
             SyncRules.loginUrl(SyncPlatform.YUKETANG, "nk.yuketang.cn")
         )
         val hosts = SyncRules.cookieHosts(SyncPlatform.YUKETANG, "nk.yuketang.cn")

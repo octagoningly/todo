@@ -135,15 +135,26 @@ fun HomeworkSyncLoginDialog(
                     WebView(context).apply {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
+                        // ★ §80：二维码只显示一半的**真正原因**就在这两行。
+                        //
+                        //   `useWideViewPort = true` 让网页按**桌面宽度**（约 980px）排版，
+                        //   但手机物理宽度只有 ~400dp。**再配 `loadWithOverviewMode = false`**，
+                        //   页面就按 980px 的布局宽度渲染、却塞进 400dp 的视口 →
+                        //   右侧内容（二维码正好在中间偏右）被裁掉一半，且横向能滚但不明显。
+                        //
+                        //   历史：§70.10 说"不要 loadWithOverviewMode，它会把 PC 页缩到一屏宽"，
+                        //   但**不缩的代价就是裁切**。对"看一眼二维码"这个需求，
+                        //   把整页缩进一屏（per-viewport 缩放）才是对的：
+                        //   用户看得到完整的二维码，也能双指放大。
                         settings.useWideViewPort = true
-                        // 不设 loadWithOverviewMode：它会把 PC 版登录页整体缩到一屏宽。
+                        settings.loadWithOverviewMode = true
                         settings.setSupportZoom(true)
                         settings.builtInZoomControls = true
                         settings.displayZoomControls = false
                         // ★ §77：去掉默认 UA 里的 `; wv` 标记。
                         //   WebView 默认 UA 形如 `... Chrome/xx ...; wv) ...`，
                         //   不少站点（含雨课堂）据此判定「这是内嵌浏览器」并降级、
-                        //   或直接返回与真机浏览器不同的布局 —— 课程区塌陷很可能与此有关。
+                        //   或直接返回与真机浏览器不同的布局。
                         //   只改 UA 字符串，不伪装成别的设备型号，页面仍是平台自己的官方页。
                         settings.userAgentString = settings.userAgentString
                             ?.replace("; wv)", ")")
@@ -178,12 +189,16 @@ fun HomeworkSyncLoginDialog(
             ) {
                 TextButton(onClick = onDismiss) { Text("关闭") }
                 TextButton(onClick = { relogin() }) { Text("重登") }
-                // ★ §77：让用户能自己走到课程页再抓。
-                //   之前探针只能在登录页上跑，DOM 体检自然看到的是登录表单，
-                //   拿不到「我教的课 / 我听的课」这些真实内容。
-                //   这里只做一次导航，不注入任何脚本、不改页面。
+                // ★ §80：登录成功后直达**移动版课程页** `/m/v2`。
+                //   未登录时它会 302 回 PC 登录页（所以不能当入口用），
+                //   但**登录之后**这就是平台自己的移动版首页，直接给课程列表。
+                //   只做导航，不注入脚本、不改页面。
                 TextButton(onClick = {
-                    webViewRef?.loadUrl(SyncRules.loginUrl(platform, host).substringBefore("?"))
+                    val w = webViewRef ?: return@TextButton
+                    val base = SyncRules.loginUrl(platform, host).substringBefore("/web")
+                    w.loadUrl(
+                        if (platform == SyncPlatform.YUKETANG) "$base/m/v2" else base
+                    )
                 }) { Text("课程页") }
                 TextButton(onClick = {
                     val web = webViewRef ?: return@TextButton
