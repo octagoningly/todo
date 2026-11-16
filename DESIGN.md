@@ -6866,3 +6866,131 @@ c27：探测 50 门 / 拿到节点 11 门
 7. **用户对自己学校的平台用法比任何文档都准。**
    「老师只能发布考试」这一句，直接解释了我一直想不通的"为什么全是 type=5"。
    **遇到"字段值高度单一"时，先问用户平台是怎么用的，别急着猜字段语义。**
+
+---
+
+## §85–89 收尾：写进待办 + 一键抓取 + 自动抓取（2026-11-16）
+
+### 85.1 数据库 v8 → v9：加两列
+
+作业导入需要记住「这条待办来自哪个平台、平台编号是多少」。
+
+```sql
+ALTER TABLE todos ADD COLUMN source     TEXT NOT NULL DEFAULT '';
+ALTER TABLE todos ADD COLUMN externalId TEXT NOT NULL DEFAULT '';
+```
+
+★ 严格照抄 `MIGRATION_7_8` 的规格：
+- **显式 DEFAULT**（少写会让 Room 校验抛异常、启动即崩，0.9.3 那次教训）；
+- **`hasColumn` 幂等**（迁移中途失败但没回滚的设备列可能已存在）；
+- **`ALL_MIGRATIONS` 接上**，两侧测试共用同一组对象；
+- 老数据全落空串 =「用户自己写的」，去重逻辑不会命中它，**行为零变化**。
+
+`app/schemas/.../9.json` 已导出，核对过两个新列是 `TEXT` + `default "''"`，
+与迁移 SQL 逐字一致。
+
+### 85.2 映射与过滤（`ImportRules`，纯函数）
+
+| 规则 | 理由 |
+| --- | --- |
+| 标题拼成 `科目 · 类型 · 原标题` | 雨课堂里「第九讲作业」与「小测1」都是 type=5，不标类型分不清 |
+| 截止 **`00:00` 显示为 `23:59`** | 课堂派 `endtime` 给 `2026-11-19 00:00`，平台语义是「19 号结束」；显示 00:00 会让人以为 18 号夜里截止 |
+| 只导本学期 | 课堂派 7 门课里 6 门是往期、共 80 条作业 |
+| 只导未过期 | 雨课堂 43 条有截止的里 41 条已过期 |
+| 缺科目/标题跳过 | 不写半条脏数据进待办 |
+
+### 85.3 落库（`TodoRepository.importHomework`）
+
+与 `addFromParsed` **分开**，不动被多处调用的老路径。
+
+- **去重**：按 `source + externalId`，已导入的跳过；**绝不覆盖用户手改过的条目**；
+- **不 update 只 insert**：用户改过的标题/时间不会被同步冲掉；
+- **排提醒**：复用 `ReminderScheduler.scheduleBlocking()`（唯一入口）。
+
+### 86.1 预览确认（用户拍板「先弹预览再写入」）
+
+`HomeworkImportPreviewDialog`：列出真的要写入的条目、按截止时间升序、
+显示类型徽章与截止时刻。**预览阶段全程只读**，点取消则待办一个字节都不变。
+
+### 87.1 一键抓取（用户要求）
+
+设置页新增「抓取全部作业」：点一下自动抓**所有已登录平台**，合并成一个预览。
+
+```
+共 4 条待导入
+· 课堂派：2 条
+· 雨课堂：2 条
+```
+
+- 未登录的平台跳过并标注，**绝不弹登录框**（账号密码只能用户自己在官方页输入）；
+- 一个平台失败不影响另一个（各自 `runCatching`）。
+
+### 88.1 ★ 自动抓取：冷启动静默导入
+
+`SyncEngine.autoSyncAndImport()` 挂在 `MainActivity` 冷启动的 `LaunchedEffect` 里。
+
+**四条门槛**（`SyncSettings.shouldAutoSync`）：
+1. 总闸开着；
+2. 同步时机不是「仅手动」；
+3. 距上次自动抓取 ≥ **6 小时**（避免频繁切 App 反复打平台接口）；
+4. 至少一个平台已登录。
+
+**静默导入的安全前提**（四条都已具备）：
+去重保证不堆条目 / 只导未过期 / 只 insert 不 update（不冲掉用户编辑）/ 门槛限制频率。
+
+### 88.2 ★ 真机验证：整条链路跑通
+
+冷启动日志（设备 PKB110，2026-11-16 13:02）：
+
+```
+autoSync start
+collectPreview platform=ketangpai
+  native ... homework POST -> 200 ...        ← 5 门课 × 作业/考试
+collectPreview extracted=86                  ← 抽出 86 条
+collectPreview preview=2                     ← 过滤后 2 条
+collectPreview platform=yuketang
+collectPreview extracted=43
+collectPreview preview=2
+importConfirmed added=2 skipped=2            ← ★ 去重生效
+autoSync done: 新增 2 条，跳过 2 条（已存在）
+```
+
+**`skipped=2` 是关键证据**：用户先前手动导入过 2 条，这次自动抓取正确识别为重复并跳过，
+只新增另外 2 条。**去重逻辑在真实数据上验证成功，不是只在单测里绿。**
+
+### 89 验证
+
+- `:app:testDebugUnitTest` **496 条 / 0 失败**
+  （新增 `ImportRulesTest` 12 条 + `OneClickSyncTest` 7 条）。
+- `:app:assembleRelease` **BUILD SUCCESSFUL**；`adb install -r` **Success**。
+- **数据库迁移已验证不崩**：连续 force-stop + 启动 3 次，每次都拿到新进程，
+  无 `FATAL EXCEPTION` / `Migration didn't properly handle`。
+- `app/build.gradle.kts` 零 diff（临时对齐 37 跑测试，打包前恢复 36）。
+
+### 89.1 当前状态：功能闭环
+
+| 环节 | 状态 |
+| --- | --- |
+| 两平台登录 | ✅ |
+| 接口探路 | ✅ |
+| 字段映射（科目/标题/绝对截止） | ✅ |
+| 数据库加列 + 迁移 | ✅ 真机验证 |
+| 去重 | ✅ 真机验证（skipped=2） |
+| 排提醒 | ✅ 复用现有引擎 |
+| 预览确认 | ✅ |
+| 一键抓取 | ✅ |
+| 冷启动自动抓取 | ✅ 真机验证 |
+
+### 89.2 仍待处理的已知问题
+
+1. **学期过滤没有真正启用**。`collectPreview` 的 `semesterOf` 传的是 `{ null }` =
+   不按学期筛。目前靠「只导未过期」间接过滤掉了往期作业，但若往期作业截止日
+   恰好还没到（比如跨年补交），会被误导入。**要真正修需要一个「课程名 → 学期」
+   映射**：课堂派的学期在 `semesterCourseList` 的响应里，雨课堂在 `courses/list`
+   的 `term` 里，两处都拿得到，只是没接进 `ImportItem`。
+2. **一键抓取没有"全平台同时抓"的并发**：目前是串行（课堂派跑完再跑雨课堂），
+   一次约 40 秒。可以并行，但会同时打两个平台的接口，暂不做。
+3. 雨课堂 `c27` 每门课都打一次，50 门课 = 50 次请求，偏重。可优化为只对
+   `term=本学期` 的课去打。
+4. **正式发版前**要过一遍 `docs/PRIVACY.md`：这个功能会联网读第三方平台的作业数据，
+   隐私政策必须如实描述（哪些数据、存在哪、不联网上传）。

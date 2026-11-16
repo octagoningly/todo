@@ -99,4 +99,46 @@ object SyncSettings {
             .remove(KEY_LAST_SYNC_AT)
             .apply()
     }
+
+    // ---------- §88 打开 App 时自动抓取 ----------
+
+    /**
+     * 上次**自动**抓取的时间。
+     *
+     * ★ 与 [lastSyncAt]（用户主动点的那次）分开记，否则"用户手动抓过"
+     *   会让下一次冷启动误以为刚抓过而跳过。
+     */
+    fun lastAutoSyncAt(context: Context): Long =
+        prefs(context).getLong(KEY_LAST_AUTO_SYNC, 0L)
+
+    fun setLastAutoSyncAt(context: Context, millis: Long) {
+        prefs(context).edit().putLong(KEY_LAST_AUTO_SYNC, millis).apply()
+    }
+
+    /**
+     * 该不该在这次冷启动自动抓一次。
+     *
+     * 四条门槛，缺一不可：
+     * 1. 总闸开着（用户没关）；
+     * 2. 同步时机不是「仅手动」；
+     * 3. 距上次自动抓取已超过 [minIntervalMillis]（默认 6 小时）——
+     *    避免用户频繁切 App 时反复发请求打平台；
+     * 4. 至少有一个平台已登录（由调用方判断，这里不管）。
+     */
+    fun shouldAutoSync(
+        context: Context,
+        nowMillis: Long,
+        minIntervalMillis: Long = AUTO_SYNC_MIN_INTERVAL_MS
+    ): Boolean {
+        if (!enabled(context)) return false
+        if (triggerMode(context) == SyncTrigger.MANUAL_ONLY) return false
+        val last = lastAutoSyncAt(context)
+        if (last <= 0L) return true
+        return nowMillis - last >= minIntervalMillis
+    }
+
+    /** 自动抓取最小间隔：6 小时。 */
+    const val AUTO_SYNC_MIN_INTERVAL_MS = 6L * 60 * 60 * 1000
+
+    private const val KEY_LAST_AUTO_SYNC = "last_auto_sync_at"
 }

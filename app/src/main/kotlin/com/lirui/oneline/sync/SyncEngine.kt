@@ -104,6 +104,140 @@ object SyncEngine {
         return ImportOutcome(added, skipped, lines.size)
     }
 
+    /** 一个平台在「一键抓取」里的状态。 */
+    data class PlatformResult(
+        val platform: SyncPlatform,
+        val loggedIn: Boolean,
+        val preview: List<ImportRules.PreviewLine>,
+        val error: String? = null
+    )
+
+    /**
+     * ★ §87 **一键抓取全部已登录平台**的作业。
+     *
+     * 这是用户要的主入口：不再需要进登录页、不必点「抓作业」，
+     * 设置里一个按钮就把所有已登录平台的作业拉回来。
+     *
+     * 规则：
+     * - **只抓已登录的**平台。未登录的直接跳过并在结果里标注，
+     *   绝不弹登录框、绝不替用户去登录（账号密码只能用户自己在官方页输入）。
+     * - 一个平台失败不影响另一个：各自 `runCatching` 包住。
+     * - 合并成一个预览列表，按截止时间升序 —— 用户一次确认全部。
+     */
+    fun collectAllLoggedIn(
+        checks: List<PlatformCheck>,
+        nowMillis: Long = System.currentTimeMillis()
+    ): List<PlatformResult> {
+        val out = mutableListOf<PlatformResult>()
+        checks.forEach { c ->
+            if (!c.loggedIn) {
+                out += PlatformResult(c.platform, false, emptyList(), null)
+                return@forEach
+            }
+            val preview = runCatching {
+                collectPreview(
+                    platform = c.platform,
+                    host = c.host,
+                    cookies = c.cookies,
+                    semesterTag = null,
+                    nowMillis = nowMillis
+                )
+            }.getOrElse { e ->
+                Log.e(TAG, "collect ${c.platform.id} failed: ${e.javaClass.simpleName}", e)
+                out += PlatformResult(
+                    c.platform, true, emptyList(), e.javaClass.simpleName
+                )
+                return@forEach
+            }
+            out += PlatformResult(c.platform, true, preview, null)
+        }
+        return out
+    }
+
+    /** 一个平台的抓取前提（登录态 + 凭证）。由 UI 层填，core 层只消费。 */
+    data class PlatformCheck(
+        val platform: SyncPlatform,
+        val host: String,
+        val loggedIn: Boolean,
+        val cookies: Map<String, String>
+    )
+
+    /** 把多平台结果合并成一个按截止时间升序的预览（同一条只留一次）。 */
+    fun mergePreviews(results: List<PlatformResult>): List<ImportRules.PreviewLine> =
+        results
+            .flatMap { it.preview }
+            .distinctBy { it.dedupeKey }
+            .sortedBy { it.item.deadlineMillis }
+
+    /** 一键抓取结果的一句话摘要，直接显示在设置页。 */
+    fun summarizeAll(results: List<PlatformResult>): String {
+        if (results.isEmpty()) return "没有启用的平台"
+        val loggedIn = results.filter { it.loggedIn }
+        if (loggedIn.isEmpty()) {
+            return "两个平台都未登录。请先点「登录」在官方页登录一次。"
+        }
+        val total = mergePreviews(results).size
+        val parts = results.joinToString("\n") { r ->
+            when {
+                !r.loggedIn -> "· ${r.platform.label}：未登录，已跳过"
+                r.error != null -> "· ${r.platform.label}：抓取失败（${r.error}）"
+                r.preview.isEmpty() -> "· ${r.platform.label}：没有待导入的作业"
+                else -> "· ${r.platform.label}：${r.preview.size} 条"
+            }
+        }
+        val head = if (total == 0) "没有可导入的作业" else "共 $total 条待导入"
+        return "$head\n$parts"
+    }
+
+    /**
+     * ★ §88 **打开 App 时自动抓取并静默导入**（用户要求的「todo 里面自动抓取」）。
+     *
+     * 与 [collectAllLoggedIn] 的区别：**不弹预览，直接写入**。
+     *
+     * 这样做安全的前提（都已具备）：
+     * 1. **去重**：已导入过的 `source+externalId` 一定跳过，重复冷启动不会堆条目；
+     * 2. **只导未过期的**：[ImportRules.shouldImport] 已经滤掉过期与脏时间；
+     * 3. **不覆盖用户编辑**：导入只 insert，不 update——用户改过的标题/时间不会被冲掉；
+     * 4. **门槛**：[SyncSettings.shouldAutoSync] 限制 6 小时内不重复抓、总闸关了不抓。
+     *
+     * 返回一句话摘要（为空表示没有变化，UI 可以完全不打扰用户）。
+     */
+    suspend fun autoSyncAndImport(
+        context: Context,
+        nowMillis: Long = System.currentTimeMillis()
+    ): String? {
+        // 门槛先过，避免无意义的网络请求。
+        if (!SyncSettings.shouldAutoSync(context, nowMillis)) return null
+
+        val checks = SyncPlatform.values().map { p ->
+            val h = SyncSettings.host(context, p)
+            val snap = SyncCredentialStore.snapshot(p, h)
+            PlatformCheck(
+                platform = p,
+                host = h,
+                loggedIn = SyncSettings.userConfirmedLogin(context) ||
+                    SyncRules.hasSession(p, snap.cookies),
+                cookies = snap.cookies
+            )
+        }
+        if (checks.none { it.loggedIn }) {
+            Log.d(TAG, "autoSync skipped: no platform logged in")
+            return null
+        }
+        Log.d(TAG, "autoSync start")
+        val results = collectAllLoggedIn(checks, nowMillis)
+        val merged = mergePreviews(results)
+        SyncSettings.setLastAutoSyncAt(context, nowMillis)
+        if (merged.isEmpty()) {
+            Log.d(TAG, "autoSync: nothing to import")
+            return null
+        }
+        val outcome = importConfirmed(context, merged)
+        Log.d(TAG, "autoSync done: ${outcome.summary()}")
+        // 只有真的新增了才返回摘要 —— 没有新增就不打扰用户。
+        return if (outcome.added > 0) outcome.summary() else null
+    }
+
     /** 登录探针：只回答「凭证拿到没有」，不抓作业。 */
     fun probe(platform: SyncPlatform, host: String, snapshot: CookieSnapshot): Probe =
         Probe(

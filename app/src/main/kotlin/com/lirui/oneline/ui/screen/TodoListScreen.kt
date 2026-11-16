@@ -2460,6 +2460,8 @@ private fun HomeworkSyncSection(context: android.content.Context) {
     var importPreview by remember {
         mutableStateOf<List<com.lirui.oneline.sync.ImportRules.PreviewLine>?>(null)
     }
+    // ★ §87：一键抓取进行中，用来禁用按钮并显示"抓取中"。
+    var syncing by remember { mutableStateOf(false) }
     val importScope = rememberCoroutineScope()
 
     // 进入本节 / 换平台时刷一次会话状态。只读 Cookie 名字，永远不取值。
@@ -2540,6 +2542,71 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                     trailingContent = {
                         Text(
                             if (loggedIn) "重新登录" else "登录",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    modifier = Modifier.clickable { showLogin = true }
+                )
+                ItemDivider()
+                // ★ §87 一键抓取：不再需要进登录网页点「抓作业」。
+                //   点一下就把**所有已登录平台**的作业拉回来并弹预览确认。
+                ListItem(
+                    headlineContent = { Text("抓取全部作业") },
+                    supportingContent = {
+                        Text(
+                            if (syncing) "正在抓取…"
+                            else "自动抓取已登录平台的作业，确认后导入待办"
+                        )
+                    },
+                    trailingContent = {
+                        Text(
+                            if (syncing) "抓取中" else "一键抓取",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (syncing) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            }
+                        )
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    modifier = Modifier.clickable(enabled = !syncing) {
+                        syncing = true
+                        diagnostic = null
+                        importScope.launch {
+                            // 1) 先问两个平台各自登没登录（只读 Cookie 名字，不取值）
+                            val checks = SyncPlatform.values().map { p ->
+                                val h = SyncSettings.host(context, p)
+                                val snap = SyncCredentialStore.snapshot(p, h)
+                                SyncEngine.PlatformCheck(
+                                    platform = p,
+                                    host = h,
+                                    loggedIn = SyncSettings.userConfirmedLogin(context) ||
+                                        com.lirui.oneline.sync.SyncRules.hasSession(p, snap.cookies),
+                                    cookies = snap.cookies
+                                )
+                            }
+                            // 2) 抓取（网络 + 解析，放 IO 线程）
+                            val results = withContext(Dispatchers.IO) {
+                                SyncEngine.collectAllLoggedIn(checks)
+                            }
+                            // 3) 合并成一个预览
+                            val merged = SyncEngine.mergePreviews(results)
+                            syncing = false
+                            diagnostic = SyncEngine.summarizeAll(results)
+                            importPreview = merged
+                        }
+                    }
+                )
+                ItemDivider()
+                ListItem(
+                    headlineContent = { Text("手动抓取当前平台") },
+                    supportingContent = { Text("进登录页后可重新抓一次（一般用上面的按钮）") },
+                    trailingContent = {
+                        Text(
+                            "打开",
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.primary
                         )

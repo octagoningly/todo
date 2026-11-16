@@ -36,6 +36,8 @@ import com.lirui.oneline.update.AppUpdate
 import com.lirui.oneline.update.UpdateCheck
 import com.lirui.oneline.update.UpdateService
 import com.lirui.oneline.util.SettingsRepo
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MainActivity : androidx.activity.ComponentActivity() {
 
@@ -146,6 +148,20 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 // 专注同理：闹钟条目不落盘，冷启动 / 升级 / 重启后要把「还在跑的专注」
                 // 的到点闹钟和常驻通知重新挂上，否则计时会一直走、永远不响。
                 FocusEngine.restore(appContext, System.currentTimeMillis())
+            }
+
+            // ── ★ §88 冷启动自动抓取作业（默认跟随"同步时机"设置）──
+            // 门槛全在 SyncSettings.shouldAutoSync 里（总闸 / 仅手动 / 6 小时间隔），
+            // 这里只负责在后台跑，抓不到就静默、有新条目也不打扰（去重保证不重复）。
+            LaunchedEffect(Unit) {
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        com.lirui.oneline.sync.SyncEngine
+                            .autoSyncAndImport(appContext)
+                    }.onFailure {
+                        android.util.Log.w("OnelineProbe", "autoSync failed", it)
+                    }
+                }
             }
 
             // ★ 下面这一整块是「从 SharedPreferences 建出来的状态」。恢复备份后 epoch +1，
