@@ -57,8 +57,16 @@ enum class SyncPlatform(
         id = "yuketang",
         label = "雨课堂",
         defaultHost = "www.yuketang.cn",
-        // 该页同时提供「账号登录」「微信/App 扫码」「微信快捷登录」。
-        loginPath = "/web?type=3",
+        // ★ §79：改走**移动版**入口 `/m/v2`。
+        //
+        // 原来用 `/web?type=3`（PC 版）：页面是给宽屏设计的，
+        // 在手机上二维码会被裁掉一半，为此我们先后加过两轮 CSS 注入去「修布局」，
+        // 两次都把 SPA 的滚动容器顶塌（§70.10、§77），越修越坏。
+        //
+        // 实测 `/m/v2` 是平台**自己的移动版**：进入后直接是课程列表，
+        // 有「我教的课 / 我听的课 / 全部课程」，195 个课程卡片正常渲染，
+        // 完全不需要我们注入任何样式。登录后也会落在这个页面。
+        loginPath = "/m/v2",
         // 社区脚本用 sessionid + csrftoken；只有 sessionid 是登录后才有。
         // 学校子域名由用户自己填，否则 Cookie 可能落在别的 host 上读不到。
         authCookieName = "sessionid",

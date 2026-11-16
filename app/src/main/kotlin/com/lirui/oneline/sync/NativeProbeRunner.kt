@@ -31,8 +31,15 @@ object NativeProbeRunner {
     /** 单个请求超时。探针串行跑几条，单条 10 秒足够。 */
     private const val TIMEOUT_MS = 10_000
 
-    /** 每条响应最多留这么多字符，够看字段名与几条记录。 */
-    private const val SAMPLE_CHARS = 12_000
+    /**
+     * 每条响应最多留这么多字符。
+     *
+     * ★ §79：原来是 12000，而雨课堂 `/v2/api/web/courses/list` 实测 **24494 B**，
+     *   被截断后 JSON 不完整 → 解析直接抛「Unterminated string」→ 课程数算成 0。
+     *   **「接口返回 200、长度也不小，但解析出 0 条」就是这么来的**，
+     *   光看状态码完全发现不了。这里放宽到 40000，够放下这类列表响应。
+     */
+    private const val SAMPLE_CHARS = 40_000
 
     fun probeFile(context: Context, platform: SyncPlatform): File =
         File(
@@ -107,7 +114,6 @@ object NativeProbeRunner {
         val results = org.json.JSONArray()
         // 先跑四种鉴权方式，谁第一个返回可用 JSON 就用它继续。
         var working: NativeProbeSpec.ProbeRequest? = null
-        var courses: List<Triple<String, String, String>> = emptyList()
 
         for (req in NativeProbeSpec.ketangpaiRequests(credential, cookieHeader)) {
             val res = execute(req)
@@ -115,42 +121,66 @@ object NativeProbeRunner {
             val text = res.optString("sample")
             if (res.optInt("status") == 200 && looksLikeJson(text)) {
                 if (working == null) working = req
-                if (courses.isEmpty()) courses = parseKetangpaiCourses(text)
                 Log.d(TAG, "native ketangpai ${req.name} accepted tokenMode=${req.tokenMode}")
             }
         }
 
         // 鉴权方式确定不了就如实记录，不猜。
         root.put("workingTokenMode", working?.tokenMode ?: "none")
+
+        // ★ §79：课程池**不再以 topcourses 为准**。
+        //   实测 `topcourses` 只回「置顶」课程（每项 isTop:1），本学期的课
+        //   「微电班复变函数与数学物理方法」isTop:0，压根不在里面。
+        //   可靠的全量来源是 `semesterCourseList`（data 直接是数组），
+        //   所以这里以它为主，topcourses 只留作对照参考。
+        val pinnedCourses = org.json.JSONArray()
+
+        val semProbe = JSONObject()
+        var semesterGroups: List<Triple<String, String, String>> = emptyList()
+        val coursePool = LinkedHashMap<String, Triple<String, String, String>>()
+
+        for (req in NativeProbeSpec.ketangpaiSemesterRequests(credential, cookieHeader)) {
+            val res = execute(req)
+            val text = res.optString("sample")
+            results.put(res)
+
+            // 同一个 text 要按接口类型分别解析：semesterList 与 semesterCourseList 结构不同。
+            val bySemester = parseSemesterCourseList(text)
+            val bySemesterList = parseKetangpaiCoursesWithSemester(text)
+            val found = if (bySemester.isNotEmpty()) bySemester else bySemesterList
+            semProbe.put(req.name, "${res.optInt("status")}/${found.size}门")
+
+            if (semesterGroups.isEmpty()) {
+                val groups = parseKetangpaiSemesterGroups(text)
+                if (groups.isNotEmpty()) semesterGroups = groups
+            }
+            if (req.name.startsWith("api-") || req.name == "semesterList-isstudy1") {
+                // topcourses 区（置顶），只记下来对照，不并进主池。
+                val pinned = parseKetangpaiCourses(text)
+                pinned.forEach { pinnedCourses.put("${it.second}(${it.third})") }
+            }
+            if (found.isNotEmpty()) {
+                val arr = org.json.JSONArray()
+                found.take(12).forEach { arr.put("${it.second}(${it.third})") }
+                semProbe.put("${req.name}_courses", arr)
+                // ★ 全量池：以 semesterCourseList 的结果为准。
+                if (req.name.startsWith("semesterCourseList")) {
+                    found.forEach { coursePool[it.first] = it }
+                }
+            }
+        }
+        root.put("semesterProbe", semProbe)
+        root.put("pinnedCourses", pinnedCourses)
+
+        val courses = coursePool.values.toList()
         root.put("courseId", courses.firstOrNull()?.first ?: "")
         root.put("courseCount", courses.size)
         val namesArr = org.json.JSONArray()
         courses.forEach { namesArr.put("${it.second} / ${it.third}") }
         root.put("courses", namesArr)
-
-        // ★ §77/§78：`isstudy` 用错了页签，加上 `topcourses` 只是置顶区，
-        //   所以之前只看到 5 门上学期课。这里把学期探测全打一遍，
-        //   用来确认「本学期到底有没有课」以及哪条请求能拿到。
-        val semProbe = JSONObject()
-        // 学期分组是判断「本学期存不存在」的关键：data.semester[] 之前是空数组。
-        var semesterGroups: List<Triple<String, String, String>> = emptyList()
-        for (req in NativeProbeSpec.ketangpaiSemesterRequests(credential, cookieHeader)) {
-            val res = execute(req)
-            val text = res.optString("sample")
-            val list = parseKetangpaiCoursesWithSemester(text)
-            semProbe.put(req.name, "${res.optInt("status")}/${list.size}门")
-            results.put(res)
-            if (semesterGroups.isEmpty()) {
-                val groups = parseKetangpaiSemesterGroups(text)
-                if (groups.isNotEmpty()) semesterGroups = groups
-            }
-            if (list.isNotEmpty()) {
-                val arr = org.json.JSONArray()
-                list.take(12).forEach { arr.put("${it.second}(${it.third})") }
-                semProbe.put("${req.name}_courses", arr)
-            }
-        }
-        root.put("semesterProbe", semProbe)
+        // 当前学期（按日期自己算，不依赖 semester[0] 的顺序惯例）。
+        val cands = currentSemesterCandidates(todayIso())
+        root.put("currentSemesterGuess", cands.firstOrNull()?.let { "${it.first}/${it.second}" } ?: "")
         val grpArr = org.json.JSONArray()
         semesterGroups.forEach { grpArr.put("${it.first}/${it.second} ${it.third}".trim()) }
         root.put("semesterGroups", grpArr)
@@ -243,6 +273,73 @@ object NativeProbeRunner {
             }
         }
         return out.values.toList()
+    }
+
+    /** 今天（Asia/Shanghai），格式 `yyyy-MM-dd`。学期判定要用。 */
+    private fun todayIso(): String {
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+        fmt.timeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
+        return fmt.format(java.util.Date())
+    }
+
+    /**
+     * 课堂派 `semesterCourseList` 响应解析（★ §79 新增）。
+     *
+     * ★ 结构与 `semesterList` **完全不同**，这是之前解析出 0 门的原因：
+     *   - `semesterList`      → `data` 是**对象**，课程在 `data.topcourses[]`
+     *   - `semesterCourseList` → `data` 直接是**数组**，元素就是课程
+     *
+     * 实测（2026-11-16）：`{isstudy:"1", semester:"2026-2027", term:"1"}`
+     * 能拿到本学期的「微电班复变函数与数学物理方法」，且它 `isTop: 0` ——
+     * 也就是说**它不在 `topcourses` 里**，这正是之前一直看不到它的原因。
+     */
+    fun parseSemesterCourseList(json: String?): List<Triple<String, String, String>> {
+        if (json.isNullOrBlank()) return emptyList()
+        val obj = runCatching { JSONObject(json) }.getOrNull() ?: return emptyList()
+        // 正常形态：data 是数组。也兼容 data.list / data.courses 两种包裹。
+        val arr = obj.optJSONArray("data")
+            ?: obj.optJSONObject("data")?.optJSONArray("list")
+            ?: obj.optJSONObject("data")?.optJSONArray("courses")
+            ?: return emptyList()
+        val out = mutableListOf<Triple<String, String, String>>()
+        for (i in 0 until arr.length()) {
+            val c = arr.optJSONObject(i) ?: continue
+            val id = c.optString("id").ifBlank { continue }
+            out += Triple(
+                id,
+                c.optString("coursename"),
+                "${c.optString("semester")}/${c.optString("term")}"
+            )
+        }
+        return out
+    }
+
+    /**
+     * 当前学期判定（纯函数，可单测）。
+     *
+     * ★ 不依赖「学期列表里排第一的就是当前学期」—— 调研明确指出
+     *   `semester.sort` 在 bundle 里 0 处命中，`semester[0]` 只是前端惯例。
+     *   这里按「年份降序 + 学期号降序」自己算，取第一个等于或早于今天的。
+     *
+     * @param todayIso 形如 `2026-11-16`；学年 8 月切分（9月-次年1月为第1学期）。
+     */
+    fun currentSemesterCandidates(todayIso: String): List<Pair<String, String>> {
+        val year = todayIso.take(4).toIntOrNull() ?: return emptyList()
+        val month = todayIso.drop(5).take(2).toIntOrNull() ?: 1
+        // 8 月及以后 → 新学年第一学期；2-7 月 → 上一学年第二学期。
+        return if (month >= 8) {
+            listOf(
+                "$year-${year + 1}" to "1",
+                "$year-${year + 1}" to "2",
+                "${year - 1}-$year" to "2"
+            )
+        } else {
+            listOf(
+                "${year - 1}-$year" to "2",
+                "${year - 1}-$year" to "1",
+                "$year-${year + 1}" to "1"
+            )
+        }
     }
 
     /** 学期分组本身：`data.semester[]` → (semester, term, termTxt)。用来判断「本学期有没有分组」。 */
@@ -463,41 +560,71 @@ object NativeProbeRunner {
     }
 
     /**
-     * 课堂端课程列表解析，**同时兼容两种结构**（§76 调研给出）：
+     * 课堂端课程列表解析 —— **同时兼容两种真实结构**（§79 按实测响应校准）。
      *
-     * - `/v2/api/web/courses/list?identity=2` → `data.list[]`，
-     *   每项有 `classroom_id`、`name`、`course.id` / `course.name`、`term`(数字)、`role`。
-     * - `/v2/api/web/classroom_archive` → `data.classrooms[]`，
-     *   ★ 主键字段叫 **`id`** 而不是 `classroom_id`，要自己映射，
-     *     而且 `name` 是课堂名、课程名在 `course.name`。
+     * `/v2/api/web/courses/list?identity=2` → `data.list[]`：
+     * ```json
+     * {"term":202502,"name":"2026春-202523912","classroom_id":29785730,
+     *  "teacher":{"name":"黎星楠"},
+     *  "course":{"id":5605956,"name":"AI+口译"},"role":5}
+     * ```
+     * `/v2/api/web/classroom_archive` → `data.classrooms[]`：
+     * ```json
+     * {"name":"2025秋-…","id":27798058,"course":{"id":3615879,"name":"…"},
+     *  "term":202501,"university_name":"中山大学"}
+     * ```
      *
-     * 返回 (classroom_id, 课程名, course_sign)。课堂端不给 `course_sign`，
-     * 所以第三项基本为 null —— 章节树对空 sign 也能回。
+     * ★ 两处易错点：
+     *   1. 归档接口的主键叫 **`id`**，未归档叫 **`classroom_id`**，要分别取。
+     *   2. 课程名在 **`course.name`**，而顶层的 `name` 是**课堂名**（带学期前缀那种）。
+     *      两者都用上：课程名取 `course.name`，课堂名（含学期）单独留。
+     *
+     * `term` 是**数字**：`202502` = 2025-2026 学年第二学期；`202601` = 2026-2027 第一学期。
      */
     fun parseWebCourses(json: String?): List<Triple<String, String, String?>> {
         if (json.isNullOrBlank()) return emptyList()
         val obj = runCatching { JSONObject(json) }.getOrNull() ?: return emptyList()
         val data = obj.optJSONObject("data") ?: return emptyList()
-        // 未归档在 data.list，归档在 data.classrooms —— 两个都试，谁有读谁。
+        // 未归档在 data.list，归档在 data.classrooms。
         val arr = data.optJSONArray("list") ?: data.optJSONArray("classrooms")
             ?: return emptyList()
         val out = mutableListOf<Triple<String, String, String?>>()
         for (i in 0 until arr.length()) {
             val c = arr.optJSONObject(i) ?: continue
-            // 归档接口用 `id`，未归档用 `classroom_id`。
+            // 归档用 `id`，未归档用 `classroom_id`。
             val cid = c.optLong("classroom_id", 0L).takeIf { it > 0L }
                 ?: c.optLong("id", 0L).takeIf { it > 0L }
-                ?: c.optString("classroom_id").toLongOrNull()?.takeIf { it > 0L }
-                ?: c.optString("id").toLongOrNull()?.takeIf { it > 0L }
                 ?: continue
             val course = c.optJSONObject("course")
-            val name = course?.optString("name")?.takeIf { it.isNotBlank() }
-                ?: c.optString("name").takeIf { it.isNotBlank() }
-                ?: c.optString("course_name")
-            val sign = c.optString("course_sign").ifBlank { null }
-            out += Triple(cid.toString(), name, sign)
+            // 课程名优先 course.name；退而用顶层 name（课堂名，通常带学期前缀）。
+            val courseName = course?.optString("name")?.takeIf { it.isNotBlank() }
+                ?: c.optString("name")
+            val term = c.optLong("term", 0L).takeIf { it > 0L }
+            val teacher = c.optJSONObject("teacher")?.optString("name").orEmpty()
+            out += Triple(cid.toString(), courseName, termLabel(term, teacher))
         }
         return out
+    }
+
+    /**
+     * 雨课堂的数字学期 → 可读标签。`202502` = 2025-2026 第 2 学期。
+     * 传入 0 / 空时只回教师名，避免造出假学期。
+     */
+    fun termLabel(term: Long?, extra: String = ""): String? {
+        val base = when {
+            term == null || term <= 0L -> null
+            else -> {
+                val y = term / 100
+                val t = term % 100
+                "$y-${y + 1}/${t}"
+            }
+        }
+        return when {
+            base != null && extra.isNotBlank() -> "$base $extra"
+            base != null -> base
+            extra.isNotBlank() -> extra
+            else -> null
+        }
     }
 
     /**

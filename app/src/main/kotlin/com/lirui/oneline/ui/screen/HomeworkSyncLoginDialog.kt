@@ -42,38 +42,29 @@ import com.lirui.oneline.sync.SyncRules
 import com.lirui.oneline.ui.theme.Text
 
 /**
- * ★ §77 已撤掉旧的「整体解锁滚动」注入。
+ * ★ §79：**完全不再注入任何 CSS**。
  *
- * 旧版（§70.10）做的是：
- * ```
- * html.style.height = 'auto'; body.style.height = 'auto';
- * html.style.overflowY = 'auto'; body.style.overflowY = 'auto';
- * body.style.paddingTop = '56px';
- * ```
- * 目的是让被锁死的 PC 登录页能上下滑、并躲开系统状态栏。**但它有两个真问题**：
+ * 历史教训（两次都在这个位置翻车）：
+ * - §70.10 给 `html`/`body` 设 `height:auto` + `overflowY:auto`
+ *   → 把雨课堂 Vue SPA 的内部滚动容器顶塌，课程区高度变 0。
+ * - §77 改成只给 `body` 加 `paddingBottom:72px`
+ *   → 用户反馈「点进去是空白界面」。
+ *   `/m/v2` 是移动版，外层是 flex 铺满视口的布局，
+ *   给它加 padding 会改变盒模型高度，同样会把内层挤没。
  *
- * 1. **把 SPA 的内部滚动区顶塌了**。雨课堂是 Vue 应用，布局依赖
- *    「外层固定高度 + 内部容器滚动」。把 `html` / `body` 改成 `height:auto` 后，
- *    内层的高度约束消失、滚不动 → 用户看到的就是
- *    「『我教的课 / 我听的课』下面直接接导航栏，中间本该有可滑动的课程区却是一片空」。
- * 2. `paddingTop: 56px` 是当年为了躲系统状态栏加的，**后来已经从布局层
- *    用 `statusBarsPadding()` 解决了**（见本文件 `Dialog` 里的那个 modifier），
- *    这一行纯属多余的副作用，还平白把页面往下推 56px。
+ * 结论：**这个页面本来就能正常滚动、正常铺满**，
+ * 用户真正需要的只是「别被我们自己的底部按钮条挡住」——
+ * 而这件事在**原生布局层**就能干净解决（见底部按钮条下方的 Spacer/inset），
+ * 不需要、也不该去改平台自己的页面样式。
  *
- * 现在只做一件**最小侵入**的事：给 `body` 留出底部安全区，
- * 避免内容被我们自己的底部按钮条挡住。不再碰 `height` / `overflow`。
+ * 保留这个常量只是为了不破坏调用点；内容已清空。
  */
-private const val SCROLL_FIX_JS = """
-(function(){
-  try {
-    var b = document.body;
-    if (b) {
-      // 只补底部留白：底部浮动按钮条约 48dp，换算成 CSS 像素留 72px 保险。
-      b.style.paddingBottom = '72px';
-    }
-  } catch (e) {}
-})();
-"""
+private const val SCROLL_FIX_JS = ""
+
+/** 空脚本不执行，避免一次无意义的 evaluateJavascript。 */
+private fun applyLayoutFix(web: WebView) {
+    if (SCROLL_FIX_JS.isNotBlank()) web.evaluateJavascript(SCROLL_FIX_JS, null)
+}
 
 /**
  * 「在官方页登录第三方平台」的全屏页面。
@@ -158,8 +149,9 @@ fun HomeworkSyncLoginDialog(
                             ?.replace("; wv)", ")")
                         webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView?, finishedUrl: String?) {
-                                // 只在页面加载完后补一次底部留白，不再动 height / overflow。
-                                view?.evaluateJavascript(SCROLL_FIX_JS, null)
+                                // §79：不再注入任何 CSS。页面自己就能正常滚动/铺满，
+                                // 底部遮挡问题在原生布局层解决（见底部按钮条的 padding）。
+                                view?.let { applyLayoutFix(it) }
                             }
                         }
                         val cm = CookieManager.getInstance()
