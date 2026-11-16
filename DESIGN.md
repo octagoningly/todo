@@ -5892,3 +5892,121 @@ firstCourse: {id:null,...}
 - `compileSdk` 临时对齐本机 37 后改回 36，`build.gradle.kts` 零 diff。
 - 四级顺序：复用 `ProbeJs` / `ProbeRunner`；官方 `fetch` 与 `getExternalFilesDir`；
   开源参考仍只借接口参数；手写部分仍是无 Android 依赖的 JS 生成 + 单测。
+
+---
+
+## §74 第三次探针回收 + 原生 HTTP 路线（2026-11-16 上午）
+
+### 74.1 用户点了「抓作业」，我先把设备上的真实结果取回来
+
+设备 `75HMHEFQMZCQFUBY`（PKB110），09:28 点课堂派、09:31 点雨课堂，
+两个文件都在 `Android/data/com.lirui.oneline/files/` 下：
+
+| 文件 | 大小 | 时间 | 内容 |
+| --- | --- | --- | --- |
+| `oneline-probe-ketangpai.json` | 27159 B | 09:28 | 课堂派 v2 结果 |
+| `oneline-probe-yuketang.json` | 13185 B | 09:31 | 雨课堂 v2 结果 |
+| `oneline-probe.json` | 1032 B | 00:04 | 旧版遗留（首次探针），可删 |
+
+★ **`adb logcat` 里一条可用信息都没有** —— 这不是「没跑」，而是**根本没打日志**：
+`sync/` 包全项目零处 `android.util.Log`（仅 ReminderScheduler / UpdateService /
+UpdateDownloadService / TodoWidgetProvider 有），登录 Dialog 也没挂
+`WebChromeClient.onConsoleMessage`，所以 JS 的报错与 `console.log` 全进不了 logcat。
+**探针内容只存在于那两个 JSON 文件里**，这是本轮补日志（74.2）的直接原因。
+
+### 74.2 本轮做了一件「先修观测能力」的事
+
+| 件 | 改动 |
+| --- | --- |
+| `ProbeRunner.kt` | 打 `TAG=OnelineProbe`：启动（platform/host/url）、完成（state/轮询次数/接口数/落盘/字节数），摘要按行拆开发。`adb logcat -s OnelineProbe:D` 即可看到全过程 |
+| `NativeProbeRunner.kt` | 同样 TAG，每条请求一行 `name method -> status 字节数`，失败记异常类型 |
+
+### 74.3 ★ 课堂派在页面内走不通，改走原生 HTTP
+
+§73 的结论是「跨域 fetch + 自定义头 → CORS 预检失败」。本轮 `adb pull` 回来的
+课堂派结果逐条印证了它，而且给出了**更精确的分界**：
+
+| 请求 | 结果 | 判读 |
+| --- | --- | --- |
+| 同源 `/CourseApi/semesterList` | 200 + 99856 B | **是 SPA 外壳 HTML**（含 `<div id="app">`），不是 JSON —— 主站没有代理 |
+| `openapiv5` + 无自定义头 `text/plain` | **200 + JSON** `{"code":20003,"message":"账号登陆已过期"}` | **CORS 是通的**，只是没带 token |
+| 三个 `openapiv5x` + `token` 头 | `Failed to fetch` | 预检被拒 |
+| 凭证 | cookie 有 **`token`** / `SERVERID`；local 有 `autoLoginRemember` / `userSession` / `userInfo` | token 一直就在 Cookie 里 |
+
+两个结论：
+
+1. **「课堂派完全不通」不成立** —— 通的，只是**带自定义头才触发预检**。
+   上一版探针既只查 localStorage（忽略 Cookie 里的 token），又必然带自定义头，所以每条都判过期。
+2. 即便如此，**页面内仍不是可靠路线**：CORS 放行与否由平台决定，随时可能变。
+   `HttpURLConnection` 跑在 App 自己进程里，**没有同源策略**，能带任意头、
+   也能读 `CookieManager` 里含 HttpOnly 的 Cookie —— 这是本轮新增的主路线。
+
+### 74.4 新增 `NativeProbeSpec` + `NativeProbeRunner`
+
+`NativeProbeSpec` 是**纯函数**（无 Android 依赖，可本地单测），只负责「请求长什么样」：
+
+- `ketangpaiCredential()`：按 `token` → `ketangpai_home_remember` → `userSession(JSON)`
+  顺序取，**只回 tokenFound / source，值不外泄**。
+- `ketangpaiRequests()`：**同一接口、四种凭证传递方式**（header / none / body / query / form），
+  一次跑完就有答案，不用来回改代码发版。
+- `yuketangHeaders()`：`xtbz` 做成参数（`cloud` / `ykt`），`x-client` / `classroom-id` 可选。
+- `encode()`：见 74.6 的坑。
+
+`NativeProbeRunner` 负责发请求与落盘（`oneline-native-<platform>.json`），后台线程跑、
+回调切回主线程（调用方是 Compose，直接改状态才不会崩）。
+
+**边界不变**：只读、不提交、不改平台数据、不落库、不动 Room、不排提醒。
+结果文件里 `token=` 一律打码，日志只记「找到/没找到」。
+
+### 74.5 雨课堂：调研订正了两处认知
+
+按 AGENTS.md §2 第 3 级做了开源实现调研（`heyblackC/yuketangHelper`、
+`aglorice/Raincourse`、`Zachary709/YuKeTang` 等），并做了路由存在性实测
+（用「nginx 404 HTML」vs「业务 JSON」区分「路由不存在」与「未登录」）。三条硬结论：
+
+1. **不存在「作业列表」接口**。扫了 66 个候选路由名全 404。
+   作业/考试**只能从章节树按 `leaf_type` 筛**：
+   `0=视频 3=公告 4=讨论 5=考试 6=作业`（两份独立源码互证）。
+   → 上一轮把 `user-tasks` / `exercise/list` 当聚合入口是错的，删掉。
+2. **`leaf_info` 必须是两段数字 + 末尾斜杠**：`/leaf_info/<cid>/<leaf_id>/`。
+   §73 试的单段 `/leaf_info/<cid>/` 是**路由错**（nginx 404），不是缺参数。
+3. **截止时间 `score_deadline` 是 Unix 毫秒，`0` 表示「无限制」**。
+   详情里另有 `content.score_d`（毫秒，`null` = 不可用）。
+   ★ 直接把 0 当时间戳会渲染成 **1970 年** —— 这是最容易写进待办的一个脏数据。
+
+顺带发现两个易错点，都已落进代码：
+
+- `section_leaf_list[]` 里的节点**可能带嵌套 `leaf_list`**，只处理顶层会漏掉一半作业节点。
+- `xtbz` 不只有 `cloud`，`ykt` + `x-client: web` 是另一派主流写法。
+
+### 74.6 单测逮到的真 bug
+
+`encode()` 原本写 `ch.isLetterOrDigit()` 做白名单 —— 那个**对中文也返回 true**，
+`encode("作业")` 会原样吐出裸中文，拼进 query 就是非法 URL。改成显式 ASCII 判断。
+这条是 `NativeProbeSpecTest` 的断言逼出来的，不是事后发现。
+
+### 74.7 边界与待办
+
+- 仍**不落库、不动 Room、不排提醒**，`SyncEngine` 保持骨架。
+- 下一步（等用户重跑）：两个平台各点一次「抓作业」→ 取回
+  `oneline-native-*.json`：
+  - 课堂派：看 `workingTokenMode` 是哪条通、`courseId` 有没有拿到、作业/考试接口是否回数据。
+  - 雨课堂：看两门课的 `homeworkCount` / `examCount` 是否非零、`withDeadline` 是否 > 0。
+    若两门课都只有 `leaf_type=8`，说明作业不在章节树里，得另找入口 —— 这会改字段映射设计。
+- 探针查出的 `leaf_type_id` / `sku_id` 还没回填到题目接口调用（当前用节点 id 先试）。
+
+### 74.8 验证
+
+- `:app:testDebugUnitTest` **430 条 / 0 失败**（新增 `NativeProbeSpecTest` 13 条 +
+  `YuketangRulesTest` 8 条）；`:app:assembleRelease` **BUILD SUCCESSFUL**；
+  `adb install -r` **Success**（2026-11-16 10:01:43），仍是 1.0.14 / 48，数据保留。
+- 签名 SHA-256 `c0847ef1…2548` 与机上完全一致，覆盖安装不需要卸载。
+- `compileSdk` 临时对齐本机 37 跑测试，**改回 36 后重新打 release 包**，
+  `app/build.gradle.kts` 零 diff（中途 `Set-Content` 曾把整个文件换行符改成 CRLF
+  产生 255 行伪 diff，已 `git checkout` 恢复）。
+- 四级顺序：复用 `ProbeJs` / `ProbeRunner` / `SyncCredentialStore` / `SyncRules`；
+  官方 `HttpURLConnection` / `CookieManager` / `Handler` / `getExternalFilesDir`；
+  开源参考只借接口路径与字段名（`yuketangHelper`、`Raincourse`、`YuKeTang`），不引依赖；
+  手写部分抽成无 Android 依赖的 `NativeProbeSpec` + 单测。
+- ★ 教训记录：Kotlin **块注释支持嵌套**，注释里写 `/CourseApi/*` 的 `/*` 会开启嵌套注释，
+  导致「Unclosed comment」编译错。写路径通配时别用 `/*`。

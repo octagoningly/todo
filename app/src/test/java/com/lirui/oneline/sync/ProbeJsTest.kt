@@ -24,6 +24,11 @@ class ProbeJsTest {
         assertTrue(js.contains("api-simple"))
         assertTrue(js.contains("v4-semesterList"))
         assertTrue(js.contains("credentials"))
+        // §74：Cookie 里的 token 必须用不触发 CORS 预检的方式传。
+        assertTrue(js.contains("cookieTokenFound"))
+        assertTrue(js.contains("api-bodyToken"))
+        assertTrue(js.contains("api-queryToken"))
+        assertTrue(js.contains("api-formToken"))
     }
 
     @Test

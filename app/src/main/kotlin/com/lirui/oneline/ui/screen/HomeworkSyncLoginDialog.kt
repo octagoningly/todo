@@ -34,6 +34,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.lirui.oneline.sync.CookieSnapshot
+import com.lirui.oneline.sync.NativeProbeRunner
 import com.lirui.oneline.sync.ProbeRunner
 import com.lirui.oneline.sync.SyncCredentialStore
 import com.lirui.oneline.sync.SyncPlatform
@@ -164,7 +165,24 @@ fun HomeworkSyncLoginDialog(
                 TextButton(onClick = { relogin() }) { Text("重登") }
                 TextButton(onClick = {
                     val web = webViewRef ?: return@TextButton
-                    Toast.makeText(appContext, "正在抓取，完成后自动返回", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        appContext, "正在抓取（页面内 + 原生），完成后自动返回",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    // §74：两条探针并行，互不阻塞，各写各的文件：
+                    //   页面内 fetch → oneline-probe-<platform>.json（雨课堂仍走这条）
+                    //   原生 HTTP    → oneline-native-<platform>.json（课堂派只能走这条）
+                    // ★ 原生那条**先发**：它不依赖 WebView，Dialog 关掉也照跑；
+                    //   而且课堂派是本轮重点，不能因为页面内超时把结论拖没。
+                    NativeProbeRunner.run(
+                        appContext,
+                        platform,
+                        host,
+                        SyncCredentialStore.snapshot(platform, host).cookies
+                    ) { result ->
+                        // Dialog 可能已被页面内那条关掉，这里只回写诊断，不再触发关闭。
+                        onProbeResult(result)
+                    }
                     // §70.11：用当前已登录会话调候选接口，只做读取、不提交任何数据。
                     ProbeRunner.run(appContext, platform, host, web) { result ->
                         onProbeResult(result)

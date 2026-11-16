@@ -1,0 +1,154 @@
+package com.lirui.oneline.sync
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * 原生探针的**请求规格**单测。
+ *
+ * ★ 这些断言钉的是「请求长什么样」，不是「平台会怎么答」：
+ *   路径拼错、头名写错、token 漏带，编译期完全看不出来，
+ *   真机跑一轮才发现白跑 —— 正是 §72/§73 各浪费一轮的原因。
+ */
+class NativeProbeSpecTest {
+
+    // ---- 课堂派凭证提取 ----
+
+    @Test
+    fun `ketangpai token prefers explicit cookie token`() {
+        val c = NativeProbeSpec.ketangpaiCredential(
+            mapOf("token" to "abc123", "SERVERID" to "x")
+        )
+        assertTrue(c.tokenFound)
+        assertEquals("abc123", c.token)
+        assertEquals("cookie:token", c.source)
+    }
+
+    @Test
+    fun `ketangpai token falls back to legacy remember cookie`() {
+        val c = NativeProbeSpec.ketangpaiCredential(
+            mapOf("ketangpai_home_remember" to "legacy-token")
+        )
+        assertTrue(c.tokenFound)
+        assertEquals("legacy-token", c.token)
+        assertEquals("cookie:ketangpai_home_remember", c.source)
+    }
+
+    @Test
+    fun `ketangpai token can be read from userSession json`() {
+        val raw = """{"code":0,"data":{"token":"from-json","uid":"1"}}"""
+        assertEquals("from-json", NativeProbeSpec.tokenFromUserSessionJson(raw))
+        val flat = """{"token":"flat"}"""
+        assertEquals("flat", NativeProbeSpec.tokenFromUserSessionJson(flat))
+    }
+
+    @Test
+    fun `ketangpai token missing is reported not guessed`() {
+        val c = NativeProbeSpec.ketangpaiCredential(mapOf("SERVERID" to "x"))
+        assertFalse(c.tokenFound)
+        assertEquals("none", c.source)
+        assertEquals("", c.token)
+    }
+
+    // ---- 课堂派请求规格 ----
+
+    @Test
+    fun `ketangpai offers all four token transports`() {
+        val cred = NativeProbeSpec.Credential(true, "T", "cookie:token")
+        val reqs = NativeProbeSpec.ketangpaiRequests(cred, "token=T")
+        val modes = reqs.map { it.tokenMode }.toSet()
+        // header 是页面内做不到的那条；其余三条是对照组。
+        assertEquals(setOf("header", "none", "body", "query", "form"), modes)
+        // 自定义头方式必须真的把 token 放进头里。
+        val headerReq = reqs.first { it.tokenMode == "header" }
+        assertTrue(headerReq.headers.any { it.first == "token" && it.second == "T" })
+        assertTrue(headerReq.url.contains("/CourseApi/semesterList"))
+        assertEquals("POST", headerReq.method)
+        // query 方式不能把裸 token 拼进去而不编码。
+        val queryReq = reqs.first { it.tokenMode == "query" }
+        assertTrue(queryReq.url.contains("token=T"))
+    }
+
+    @Test
+    fun `ketangpai carries cookie header when available`() {
+        val cred = NativeProbeSpec.Credential(true, "T", "cookie:token")
+        val reqs = NativeProbeSpec.ketangpaiRequests(cred, "token=T; SERVERID=s1")
+        assertTrue(reqs.all { r -> r.headers.any { it.first == "Cookie" } })
+    }
+
+    @Test
+    fun `ketangpai content requests ask for homework and exam`() {
+        val cred = NativeProbeSpec.Credential(true, "T", "cookie:token")
+        val reqs = NativeProbeSpec.ketangpaiContentRequests(cred, null, "900")
+        assertEquals(listOf("homework", "exam"), reqs.map { it.name })
+        assertTrue(reqs[0].body!!.contains("\"contenttype\":4"))
+        assertTrue(reqs[1].body!!.contains("\"contenttype\":6"))
+        assertTrue(reqs[0].body!!.contains("\"courseid\":\"900\""))
+        assertTrue(reqs.all { it.url.endsWith("/FutureV2/CourseMeans/getCourseContent") })
+    }
+
+    // ---- 雨课堂请求规格 ----
+
+    @Test
+    fun `yuketang always sends xtbz cloud`() {
+        val reqs = NativeProbeSpec.yuketangRequests("www.yuketang.cn", mapOf("csrftoken" to "c"))
+        assertTrue(reqs.first().headers.any { it.first == "xtbz" && it.second == "cloud" })
+        assertTrue(reqs.first().headers.any { it.first == "x-csrftoken" && it.second == "c" })
+    }
+
+    @Test
+    fun `yuketang chapter url carries cid and sign`() {
+        val req = NativeProbeSpec.yuketangChapterRequest(
+            "www.yuketang.cn", emptyMap(), 1, "30547802", "C32F2427949868N"
+        )
+        assertEquals("chapter-1", req.name)
+        assertTrue(req.url.contains("cid=30547802"))
+        assertTrue(req.url.contains("sign=C32F2427949868N"))
+    }
+
+    @Test
+    fun `yuketang chapter url omits sign when absent`() {
+        val req = NativeProbeSpec.yuketangChapterRequest(
+            "www.yuketang.cn", emptyMap(), 0, "1", null
+        )
+        assertFalse(req.url.contains("sign="))
+    }
+
+    @Test
+    fun `yuketang leaf info tries two segment form`() {
+        val reqs = NativeProbeSpec.yuketangLeafInfoRequests(
+            "www.yuketang.cn", emptyMap(), "30547802", "84646252"
+        )
+        assertTrue(reqs.any { it.url.contains("/leaf_info/30547802/84646252/") })
+        // §74 调研订正：单段 /leaf_info/<cid>/ 是路由错（nginx 404）；
+        // 唯一正确形态是「两段数字 + 末尾斜杠」，不再保留 query 变态。
+        assertTrue(reqs.none { it.url.contains("/leaf_info/?") })
+        assertTrue(reqs.all { it.url.contains("/leaf_info/30547802/84646252") })
+    }
+
+    // ---- 编码 ----
+
+    @Test
+    fun `encode escapes plus and non ascii`() {
+        assertEquals("a%2Bb", NativeProbeSpec.encode("a+b"))
+        assertEquals("a%20b", NativeProbeSpec.encode("a b"))
+        assertEquals("abc-_.~", NativeProbeSpec.encode("abc-_.~"))
+        // 中文按 UTF-8 百分号编码，不能留裸字符。
+        val encoded = NativeProbeSpec.encode("作业")
+        assertTrue(encoded.startsWith("%"))
+        assertFalse(encoded.contains("作"))
+    }
+
+    @Test
+    fun `cookie header joins non blank pairs`() {
+        assertEquals(
+            "a=1; b=2",
+            NativeProbeSpec.cookieHeader(mapOf("a" to "1", "b" to "2", "c" to ""))
+        )
+        assertNull(NativeProbeSpec.cookieHeader(emptyMap()))
+    }
+}

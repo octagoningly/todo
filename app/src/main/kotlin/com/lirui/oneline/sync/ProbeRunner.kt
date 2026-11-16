@@ -3,6 +3,7 @@ package com.lirui.oneline.sync
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.webkit.WebView
 import org.json.JSONArray
 import org.json.JSONObject
@@ -14,10 +15,15 @@ import java.io.File
  * ★ `evaluateJavascript` 不会 await Promise，所以 JS 把结果写进
  *   `window.__oneline_probe`，这里用主线程 Handler 轮询读取（最多 12 秒）。
  *   不引 JavascriptInterface / 不加 proguard keep，改动面最小。
- * ★ 原始响应写到应用专属外部目录 `oneline-probe.json`（无需权限），
+ * ★ 原始响应写到应用专属外部目录 `oneline-probe-<platform>.json`（无需权限），
  *   后续可用 `adb pull` 取回分析；设置页只显示一行摘要，不糊用户一屏文字。
+ * ★ §74：补 logcat 输出。此前整条链路一行日志都没有，`adb logcat` 里
+ *   只有系统层的启停记录，探针跑没跑、拿到几个接口、写没写文件全得靠 pull 文件猜。
+ *   现在打 TAG = `OnelineProbe`，用 `adb logcat -s OnelineProbe:D` 就能看到全过程。
  */
 object ProbeRunner {
+
+    private const val TAG = "OnelineProbe"
 
     private const val MAX_POLLS = 24
     private const val POLL_MS = 500L
@@ -44,6 +50,7 @@ object ProbeRunner {
         webView: WebView,
         onResult: (String) -> Unit
     ) {
+        Log.d(TAG, "start platform=${platform.id} host=$host url=${webView.url}")
         webView.evaluateJavascript(ProbeJs.build(platform, host), null)
         val handler = Handler(Looper.getMainLooper())
         var tries = 0
@@ -60,6 +67,12 @@ object ProbeRunner {
                         ?: "探针结束，未拿到摘要"
                     val file = probeFile(context, platform)
                     val saved = runCatching { file.writeText(raw) }.isSuccess
+                    // ★ §74：摘要可能多行，logcat 按行拆开发，否则只看到第一行。
+                    Log.d(TAG, "done platform=${platform.id} state=$state polls=$tries " +
+                        "results=$count saved=$saved file=${file.name} bytes=${raw.length}")
+                    summary.lineSequence().forEach { line ->
+                        if (line.isNotBlank()) Log.d(TAG, "  | $line")
+                    }
                     onResult(
                         buildString {
                             append(if (state == "done") "抓取探针：完成" else "抓取探针：超时")
