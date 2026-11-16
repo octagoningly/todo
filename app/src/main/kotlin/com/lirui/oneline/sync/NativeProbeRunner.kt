@@ -107,29 +107,35 @@ object NativeProbeRunner {
         val results = org.json.JSONArray()
         // 先跑四种鉴权方式，谁第一个返回可用 JSON 就用它继续。
         var working: NativeProbeSpec.ProbeRequest? = null
-        var courseId: String? = null
+        var courses: List<Triple<String, String, String>> = emptyList()
 
         for (req in NativeProbeSpec.ketangpaiRequests(credential, cookieHeader)) {
             val res = execute(req)
             results.put(res)
             val text = res.optString("sample")
             if (res.optInt("status") == 200 && looksLikeJson(text)) {
-                val ids = parseKetangpaiCourseId(text)
                 if (working == null) working = req
-                if (courseId == null) courseId = ids
+                if (courses.isEmpty()) courses = parseKetangpaiCourses(text)
                 Log.d(TAG, "native ketangpai ${req.name} accepted tokenMode=${req.tokenMode}")
             }
         }
 
         // 鉴权方式确定不了就如实记录，不猜。
         root.put("workingTokenMode", working?.tokenMode ?: "none")
-        root.put("courseId", courseId ?: "")
+        root.put("courseId", courses.firstOrNull()?.first ?: "")
+        root.put("courseCount", courses.size)
+        val namesArr = org.json.JSONArray()
+        courses.forEach { namesArr.put("${it.second} / ${it.third}") }
+        root.put("courses", namesArr)
 
-        if (courseId != null) {
+        // ★ 作业/考试：对**每门课**都取一次，避免「第一门没作业就下结论」。
+        courses.take(6).forEach { c ->
             for (req in NativeProbeSpec.ketangpaiContentRequests(
-                credential, cookieHeader, courseId
+                credential, cookieHeader, c.first
             )) {
-                results.put(execute(req))
+                val res = execute(req)
+                res.put("course", c.second)
+                results.put(res)
             }
         }
         root.put("results", results)
@@ -141,37 +147,46 @@ object NativeProbeRunner {
         val lines = mutableListOf<String>()
         lines += "鉴权：token ${if (root.optBoolean("tokenFound")) "找到" else "没找到"}" +
             "（${root.optString("tokenSource")}）/ 可用方式 ${root.optString("workingTokenMode")}"
-        lines += "课程 id：${root.optString("courseId").ifBlank { "未取到" }}"
+        lines += "课程：${root.optInt("courseCount")} 门"
+        val cs = root.optJSONArray("courses")
+        if (cs != null) {
+            for (i in 0 until minOf(cs.length(), 5)) lines += "  · ${cs.optString(i)}"
+        }
         val parts = (0 until results.length()).map { i ->
             val r = results.getJSONObject(i)
-            "${r.optString("name")} ${r.optInt("status")} ${r.optInt("len")}B"
+            val course = r.optString("course")
+            val prefix = if (course.isBlank()) "" else "$course/"
+            "$prefix${r.optString("name")} ${r.optInt("status")} ${r.optInt("len")}B"
         }
         lines += "接口：${parts.joinToString(" / ")}"
         return lines.joinToString("\n")
     }
 
-    /** 课堂派课程列表：`data[]` 里取第一条的 `id`，取不到就空。 */
-    fun parseKetangpaiCourseId(json: String): String? {
-        val key = "\"data\""
-        val idx = json.indexOf(key)
-        if (idx < 0) return null
-        val arr = json.indexOf('[', idx)
-        if (arr < 0) return null
-        // 在 data 数组的头部一小段里找第一个 id。
-        val window = json.substring(arr, minOf(arr + 600, json.length))
-        for (idKey in listOf("\"id\"", "\"courseid\"")) {
-            val p = window.indexOf(idKey)
-            if (p < 0) continue
-            val colon = window.indexOf(':', p)
-            if (colon < 0) continue
-            var s = colon + 1
-            while (s < window.length && (window[s] == ' ' || window[s] == '"')) s++
-            var e = s
-            while (e < window.length && window[e].isDigit()) e++
-            if (e > s) return window.substring(s, e)
+    /**
+     * 课堂派课程列表：`data.topcourses[]` 里取第一条的 `id`。
+     *
+     * ★ §75 实测订正：`data` 是**对象**不是数组，课程挂在 `data.topcourses` 下；
+     *   而且课程 `id` 是一串**Base64 风格的字符串**（`MDAwMDAwMDAwMLOcuZmG37NshqVyoQ`），
+     *   **不是数字** —— 上一版按「data 数组 + 数字 id」解析，于是 courseId 永远是空。
+     *   这里改用 org.json 正规解析，并把字符串 id 原样保留。
+     */
+    fun parseKetangpaiCourses(json: String?): List<Triple<String, String, String>> {
+        if (json.isNullOrBlank()) return emptyList()
+        val obj = runCatching { JSONObject(json) }.getOrNull() ?: return emptyList()
+        val data = obj.optJSONObject("data") ?: return emptyList()
+        val list = data.optJSONArray("topcourses") ?: return emptyList()
+        val out = mutableListOf<Triple<String, String, String>>()
+        for (i in 0 until list.length()) {
+            val c = list.optJSONObject(i) ?: continue
+            val id = c.optString("id").ifBlank { continue }
+            out += Triple(id, c.optString("coursename"), c.optString("classname"))
         }
-        return null
+        return out
     }
+
+    /** 保留旧名给探针主体用：取第一门课的 id。 */
+    fun parseKetangpaiCourseId(json: String?): String? =
+        parseKetangpaiCourses(json).firstOrNull()?.first
 
     // ---------------------------------------------------------------------
     // 雨课堂
@@ -191,6 +206,20 @@ object NativeProbeRunner {
 
         val courses = parseYuketangCourses(coursesRes.optString("sample"))
         root.put("courseCount", courses.size)
+
+        // ★ §75：往期学期也要看一眼 —— `term=latest` 只取最新学期，
+        //   「本课没作业」与「作业在上学期」必须分开判。
+        val termCounts = JSONObject()
+        for (req in NativeProbeSpec.yuketangTermVariants(host, cookies)) {
+            val res = execute(req)
+            results.put(res)
+            val list = parseYuketangCourses(res.optString("sample"))
+            termCounts.put(req.name, list.size)
+            val arr = org.json.JSONArray()
+            list.forEach { arr.put("${it.second}(${it.first})") }
+            root.put(req.name, arr)
+        }
+        root.put("termCounts", termCounts)
 
         val allNodes = org.json.JSONArray()
         courses.forEachIndexed { i, c ->
@@ -243,20 +272,37 @@ object NativeProbeRunner {
         val uv = cookies["university_id"]
         if (!candidateId.isNullOrBlank() && candidateId != "0" && courses.isNotEmpty()) {
             val cid = courses.first().first
+            var leafTypeId: String? = null
+            var skuId: String? = null
             for (req in NativeProbeSpec.yuketangLeafInfoRequests(
                 host, cookies, cid, candidateId, uv
             )) {
-                results.put(execute(req))
+                val res = execute(req)
+                results.put(res)
+                // ★ §75：`leaf_info` 已通，从 content_info.leaf_type_id 回填题目接口要的参数。
+                //   上一版直接拿「节点 id」当 leafTypeId 打 get_exercise_list，
+                //   服务端回 `No permissions` —— id 用错了，不是没权限。
+                if (res.optInt("status") == 200) {
+                    val parsed = parseLeafInfo(res.optString("sample"))
+                    if (leafTypeId == null) leafTypeId = parsed.first
+                    if (skuId == null) skuId = parsed.second
+                }
             }
-            // 题目列表：单段形式按多数实现先用节点 id 试（真实 leaf_type_id 要等 leaf_info 回填）。
+            root.put("leafTypeId", leafTypeId ?: "")
+            root.put("skuId", skuId ?: "")
+            // 题目列表：先用真实 leaf_type_id 打单段；再按 Raincourse 写法打两段。
             for (req in NativeProbeSpec.yuketangExerciseRequests(
-                host, cookies, candidateId, candidateId, null, uv
+                host, cookies, leafTypeId, candidateId, skuId, uv
             )) {
                 results.put(execute(req))
             }
-            if (candidateLeafType == "5") {
+            if (candidateLeafType == "5" && !leafTypeId.isNullOrBlank()) {
                 results.put(
-                    execute(NativeProbeSpec.yuketangExamCoverRequest(host, cookies, candidateId, cid))
+                    execute(
+                        NativeProbeSpec.yuketangExamCoverRequest(
+                            host, cookies, leafTypeId, cid
+                        )
+                    )
                 )
             }
         }
@@ -282,6 +328,24 @@ object NativeProbeRunner {
         lines += "作业 ${root.optInt("homeworkCount")} 个 / 考试 ${root.optInt("examCount")} 个" +
             " / 有绝对截止 $withDeadline 个"
         return lines.joinToString("\n")
+    }
+
+    /**
+     * `leaf_info` 响应 → (leaf_type_id, sku_id)。
+     *
+     * ★ §75 实测：`data.content_info.leaf_type_id` 才是题目接口要的参数
+     *   （拿章节树里的节点 `id` 去打 `get_exercise_list` 会回 `No permissions`）。
+     *   `sku_id` 在 `data.sku_id`，给「两段式」写法备用。
+     */
+    fun parseLeafInfo(json: String?): Pair<String?, String?> {
+        if (json.isNullOrBlank()) return null to null
+        val obj = runCatching { JSONObject(json) }.getOrNull() ?: return null to null
+        val data = obj.optJSONObject("data") ?: return null to null
+        val contentInfo = data.optJSONObject("content_info")
+        val leafTypeId = contentInfo?.optLong("leaf_type_id", 0L)
+            ?.takeIf { it > 0L }?.toString()
+        val skuId = data.optLong("sku_id", 0L).takeIf { it > 0L }?.toString()
+        return leafTypeId to skuId
     }
 
     /** 课程列表 → (classroom_id, course_name, course_sign)。 */

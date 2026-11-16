@@ -6010,3 +6010,108 @@ UpdateDownloadService / TodoWidgetProvider 有），登录 Dialog 也没挂
   手写部分抽成无 Android 依赖的 `NativeProbeSpec` + 单测。
 - ★ 教训记录：Kotlin **块注释支持嵌套**，注释里写 `/CourseApi/*` 的 `/*` 会开启嵌套注释，
   导致「Unclosed comment」编译错。写路径通配时别用 `/*`。
+
+---
+
+## §75 第四次探针回收：课堂派打通，雨课堂确认无作业（2026-11-16 上午）
+
+### 75.1 两句话结论
+
+1. **课堂派彻底通了** —— 课程 5 门、`api-headerToken` 返回 5 门课的完整列表。
+   但我的解析写错了（见 75.2），作业接口一个都没打到。
+2. **雨课堂这个账号真的没有作业** —— 两门课 17 个节点**全是 `leaf_type=8`（课件）**，
+   第二门课 `青马学堂` 的 `course_chapter` 干脆是**空数组**。
+
+### 75.2 ★ 课堂派：鉴权全对，解析全错
+
+真机四条传递方式的实测结果（`semesterList`）：
+
+| 方式 | 结果 | 判定 |
+| --- | --- | --- |
+| `header`（`token` 头） | **200 + code 10000「访问成功」+ 4897 B** | ✅ **可用** |
+| `query`（`?token=`） | 200 + 10000 + 4897 B | ✅ 可用（但 token 进 URL，不作首选） |
+| `form`（表单编码） | 200 + 10000 + 4897 B | ✅ 可用 |
+| `body`（token 进 JSON） | 200 + **20003「账号登陆已过期」** | ❌ 不认 |
+
+★ 这条**彻底推翻**了 §73「课堂派完全不通」的判断：不是不通，是**带自定义头触发 CORS 预检**。
+原生 `HttpURLConnection` 一上，header 方式直接通过。
+
+**但我自己的解析器写错了**，两个错叠在一起：
+
+| 错误假设 | 真实结构 |
+| --- | --- |
+| `data` 是数组，课程在 `data[]` | `data` 是**对象**，课程在 **`data.topcourses[]`** |
+| 课程 `id` 是数字 | 是**字符串**（`MDAwMDAwMDAwMLOcuZmG37NshqVyoQ`，Base64 风格） |
+
+后果：`parseKetangpaiCourseId()` 按「找 `data` → 找 `[` → 扫数字」实现，
+扫到的 `[` 其实是 `topcourses` 的数组，然后数字扫描遇到引号直接失败 → `courseId` 永远空 →
+**作业接口一次都没发出**，而摘要里却显示「鉴权成功」。
+
+现在改成 org.json 正规解析（`parseKetangpaiCourses`），并**对每门课都取作业/考试**
+（上一版只取第一门）。★ 这是「只看 HTTP 状态码就当成功」的经典教训 ——
+状态 200 + code 10000 也不代表后面的链路走通了。
+
+### 75.3 ★ 安全隐患：页面内探针把 token 明文写进了 /sdcard
+
+`oneline-probe-ketangpai.json` 里出现了**完整的 64 位 token 明文**：
+
+```
+url=https://openapiv5.ketangpai.com/CourseApi/semesterList?token=893639c5...e52a3d4d
+```
+
+原因：页面内探针的 `push()` 把**原始 url** 存进结果，而结果文件落在
+`/sdcard/Android/data/...`（其他 App 可读）。原生侧我早就做了 `sanitizeUrl` 打码，
+**页面内那条漏了**。token 等同登录凭证，泄露即可冒充。
+
+处理：
+
+- `ProbeJs.kt` 新增 `maskUrl()`，`push()` 与 `catch` 分支一律经由它；
+  同时打码 `token=` 与 URL 编码后的 `token%3D`。
+- 单测钉住：`assertTrue(js.contains("url:maskUrl(url)"))`、
+  `assertFalse(js.contains("url:String(url).slice"))`。
+- **已删除**设备上与本地所有含明文 token 的旧探针文件（两份 `oneline-probe-*` 与遗留的
+  `oneline-probe.json`），避免继续留在存储卡上。
+
+### 75.4 雨课堂：Leaf 全是课件，但要区分「没作业」与「作业在往期」
+
+`leaf_info` 这一次**通了**（200 + 1178 B），印证 §74 调研的「两段数字 + 末尾斜杠」是对的。
+`xtbz: cloud` / `ykt` 两种头**都返回一样的内容**，说明这个接口不挑 xtbz。
+
+真实 `leaf_info` 结构（关键字段）：
+
+| 字段 | 值 | 说明 |
+| --- | --- | --- |
+| `data.leaf_type` | `8` | 课件 |
+| `data.score_deadline` | **`0`** | ★ 0 = 无限制，不是 1970 |
+| `data.sku_id` | `15439133` | |
+| `data.content_info.leaf_type_id` | `1716265628358151936` | ★ 题目接口要的是**这个**，不是节点 `id` |
+
+★ 上一版拿**节点 id**（`84646252`）去打 `get_exercise_list`，服务端回
+`{"msg":"No permissions","error_code":20009}` ——
+**是 id 用错了，不是没权限**。已改为从 `leaf_info` 回填 `content_info.leaf_type_id`。
+
+**当前结论**：`term=latest` 下两门课共 17 节点全是课件、`青马学堂` 章节树为空、
+`schedule` 接口只回 `leaf_schedules`（纯数字数组，无截止时间）。
+所以「这个账号在雨课堂没有作业」基本成立 —— 但还有**一个变量没排除**：
+`term=latest` 只取最新学期，作业可能在往期学期。本轮已补 `term=all` / 不带 `term`
+两个变体去验证，结果待下一轮。
+
+### 75.5 验证
+
+- `:app:testDebugUnitTest` **437 条 / 0 失败**
+  （新增 `KetangpaiParsingTest` 6 条 + `ProbeJsTest` 加 1 条 token 打码断言）。
+- `:app:assembleRelease` **BUILD SUCCESSFUL**；`adb install -r` **Success**
+  （2026-11-16 10:11:18），仍是 1.0.14 / 48，数据保留。
+- `app/build.gradle.kts` 零 diff（测试时临时对齐 37，打正式包前已 `git checkout` 恢复）。
+- 四级顺序：复用 `NativeProbeSpec` / `NativeProbeRunner` / `ProbeJs`；
+  官方 `HttpURLConnection` / `JSONObject`；开源参考仍只借接口路径；
+  手写部分仍是纯函数 + 单测。
+
+### 75.6 下一轮要答的问题
+
+1. 课堂派 5 门课的 `homework` / `exam` 接口返回什么（字段名、是否含 `endtime`、单位）。
+   `FutureV2/CourseMeans/getCourseContent` 用的是课程 `id`（字符串），
+   与 `semesterList` 返回的一致，理论上能直接接上。
+2. 雨课堂 `term=all` 里有没有往期作业。
+3. 若雨课堂确认彻底没作业，就**只做课堂派**（它已经通了），
+   雨课堂退成「仅登录、不抓取」，别为了对称把功能做坏。

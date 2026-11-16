@@ -228,6 +228,10 @@ object NativeProbeSpec {
 
     /**
      * 雨课堂候选请求。`chapter` 需要 cid + sign，两门课都要扫（§73 只扫了第一门）。
+     *
+     * ★ §75：`term` 不能只试 `latest`。实测两门课共 17 个节点**全是课件**，
+     *   但「这门课没作业」与「作业在往期学期」是两件事 ——
+     *   `latest` 只取最新学期，历史学期要单独传 `term`。
      */
     fun yuketangRequests(host: String, cookies: Map<String, String>): List<ProbeRequest> {
         val headers = yuketangHeaders(cookies)
@@ -243,6 +247,28 @@ object NativeProbeSpec {
                 tokenMode = "none"
             )
         )
+    }
+
+    /**
+     * 往期学期探测：`term=all` / 空 / 具体学期值各试一次，
+     * 用来区分「本课确实没有作业」和「作业不在当前学期」。
+     */
+    fun yuketangTermVariants(host: String, cookies: Map<String, String>): List<ProbeRequest> {
+        val base = "https://$host/mooc-api/v1/lms/user/user-courses/"
+        return listOf(
+            "all",
+            ""
+        ).mapIndexed { i, term ->
+            val q = if (term.isEmpty()) "" else "term=$term"
+            ProbeRequest(
+                name = "courses-term${if (term.isEmpty()) "none" else term}",
+                method = "GET",
+                url = "$base?status=1&page=1&no_page=1" + (if (q.isEmpty()) "" else "&$q"),
+                headers = yuketangHeaders(cookies),
+                body = null,
+                tokenMode = "none"
+            )
+        }
     }
 
     /** 章节树：每门课一条。 */

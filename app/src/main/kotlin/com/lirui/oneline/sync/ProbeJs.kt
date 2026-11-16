@@ -48,9 +48,14 @@ object ProbeJs {
       if(n) P.keywords[w]=(P.keywords[w]||0)+n;
     }
   }
+  function maskUrl(u){
+    // ★ §75：结果文件落在 /sdcard（其他应用可读的位置），token 绝不能明文进去。
+    return String(u||'').replace(/token=[^&]*/gi,'token=***')
+                          .replace(/token%3D[^&]*/gi,'token%3D***');
+  }
   function push(name,url,status,ok,text){
     text=String(text||'');
-    P.results.push({name:name,url:String(url).slice(0,220),status:status,ok:ok,
+    P.results.push({name:name,url:maskUrl(url).slice(0,220),status:status,ok:ok,
                     len:text.length,sample:text.slice(0,12000)});
     scan(text);
   }
@@ -61,7 +66,7 @@ object ProbeJs {
     else if(opts.body) init.body=JSON.stringify(opts.body);
     return fetch(url,init)
       .then(function(r){ return r.text().then(function(t){ push(name,url,r.status,r.ok,t); return {ok:r.ok,t:t}; }); })
-      .catch(function(e){ push(name,url,-1,false,'ERR:'+e+' @'+url); return {ok:false,t:''}; });
+      .catch(function(e){ push(name,url,-1,false,'ERR:'+e+' @'+maskUrl(url)); return {ok:false,t:''}; });
   }
   function jsonHeaders(extra){
     var h={'Content-Type':'application/json'};

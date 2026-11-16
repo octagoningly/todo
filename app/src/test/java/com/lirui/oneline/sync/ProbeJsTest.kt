@@ -63,4 +63,16 @@ class ProbeJsTest {
         assertFalse(js.contains("__PLATFORM__"))
         assertFalse(js.contains("__HOST__"))
     }
+
+    @Test
+    fun `probe never writes plaintext token into result file`() {
+        // ★ §75：结果文件落在 /sdcard（其他应用可读），token 等同登录凭证，
+        //   实测曾在 query 里明文落盘。这里钉住「必须打码」。
+        val js = ProbeJs.build(SyncPlatform.KETANGPAI, "www.ketangpai.com")
+        assertTrue(js.contains("maskUrl"))
+        assertTrue(js.contains("token=***"))
+        // 记录 URL 时必须经过 maskUrl，不能直接塞原始 url。
+        assertTrue(js.contains("url:maskUrl(url)"))
+        assertFalse(js.contains("url:String(url).slice"))
+    }
 }
