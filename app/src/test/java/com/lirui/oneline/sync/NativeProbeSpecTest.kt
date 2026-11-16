@@ -124,18 +124,6 @@ class NativeProbeSpecTest {
         assertTrue(main.headers.any { it.first == "Cookie" && it.second.contains("sessionid=s") })
     }
 
-    @Test
-    fun `yuketang leaf info tries two segment form`() {
-        val reqs = NativeProbeSpec.yuketangLeafInfoRequests(
-            "www.yuketang.cn", emptyMap(), "30547802", "84646252"
-        )
-        assertTrue(reqs.any { it.url.contains("/leaf_info/30547802/84646252/") })
-        // §74 调研订正：单段 /leaf_info/<cid>/ 是路由错（nginx 404）；
-        // 唯一正确形态是「两段数字 + 末尾斜杠」，不再保留 query 变态。
-        assertTrue(reqs.none { it.url.contains("/leaf_info/?") })
-        assertTrue(reqs.all { it.url.contains("/leaf_info/30547802/84646252") })
-    }
-
     // ---- 编码 ----
 
     @Test

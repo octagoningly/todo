@@ -53,47 +53,4 @@ class YuketangRulesTest {
         assertTrue(ykt.any { it.first == "x-client" && it.second == "web" })
         assertTrue(ykt.any { it.first == "classroom-id" && it.second == "42" })
     }
-
-    @Test
-    fun `leaf info requires two numeric segments and trailing slash`() {
-        val reqs = NativeProbeSpec.yuketangLeafInfoRequests(
-            "www.yuketang.cn", emptyMap(), "30547802", "84646252", "3078"
-        )
-        // §73 踩的坑：单段 /leaf_info/<cid>/ 必然 404，必须是两段 + 末尾斜杠。
-        val main = reqs.first { it.name == "leafInfo-2seg" }
-        assertTrue(main.url.contains("/leaf_info/30547802/84646252/"))
-        assertFalse(main.url.contains("/leaf_info/30547802/?"))
-        assertTrue(main.url.contains("uv_id=3078"))
-        // 干净形态不带 query，用来单独验证路由。
-        val bare = reqs.first { it.name == "leafInfo-bare" }
-        assertTrue(bare.url.endsWith("/leaf_info/30547802/84646252/"))
-    }
-
-    @Test
-    fun `exercise list tries single segment form`() {
-        val reqs = NativeProbeSpec.yuketangExerciseRequests(
-            "www.yuketang.cn", emptyMap(), "999", "84646252", null, "3078"
-        )
-        assertEquals(1, reqs.size)
-        assertTrue(reqs.first().url.contains("/get_exercise_list/999/"))
-        assertTrue(reqs.first().url.contains("uv_id=3078"))
-    }
-
-    @Test
-    fun `exercise list adds two segment form when sku known`() {
-        val reqs = NativeProbeSpec.yuketangExerciseRequests(
-            "www.yuketang.cn", emptyMap(), "999", "84646252", "777", "3078"
-        )
-        assertEquals(2, reqs.size)
-        assertTrue(reqs.any { it.url.contains("/get_exercise_list/84646252/777/") })
-    }
-
-    @Test
-    fun `exam cover hits v exam cover path`() {
-        val req = NativeProbeSpec.yuketangExamCoverRequest(
-            "www.yuketang.cn", emptyMap(), "1945460", "24211265"
-        )
-        assertTrue(req.url.contains("/v/exam/cover?exam_id=1945460"))
-        assertTrue(req.url.contains("classroom_id=24211265"))
-    }
 }

@@ -716,14 +716,9 @@ object NativeProbeRunner {
             results.put(execute(req))
         }
 
-        // 老接口的学期变体保留做对照（证明「两套是不同数据源」）。
-        val termCounts = JSONObject()
-        for (req in NativeProbeSpec.yuketangTermVariants(host, cookies)) {
-            val res = execute(req)
-            results.put(res)
-            termCounts.put(req.name, parseYuketangCourses(res.optString("sample")).size)
-        }
-        root.put("termCounts", termCounts)
+        // ★ §92 精简：删掉「MOOC 老接口学期变体」对照探测。
+        //   当初只用来证明「MOOC 与课堂端是两套数据源」，结论已落进 DESIGN §76；
+        //   每次抓取却仍要多发 2 个无用请求，诊断价值耗尽，移除。
 
         val allNodes = org.json.JSONArray()
         // ★ §82：课堂端课程**不走** mooc-api 章节树。
@@ -848,54 +843,11 @@ object NativeProbeRunner {
         root.put("pendingCount", pending.length())
         root.put("pending", pending)
 
-        // 有作业/考试节点时才去试详情与题目接口，避免白打一串 404。
-        // 优先用真正的作业/考试节点；一个都没有就退回第一个有 id 的节点，
-        // 让详情接口至少被打一次（能区分「路由不通」与「这课确实没作业」）。
-        val candidate = homeworkNodes.firstOrNull()
-        val candidateId: String? = if (candidate != null) {
-            candidate.optLong("id", 0L).takeIf { it > 0L }?.toString()
-        } else {
-            firstLeafWithId(allNodes)
-        }
-        val candidateLeafType = candidate?.optString("leaf_type")
-        val uv = cookies["university_id"]
-        if (!candidateId.isNullOrBlank() && candidateId != "0" && courses.isNotEmpty()) {
-            val cid = courses.first().first
-            var leafTypeId: String? = null
-            var skuId: String? = null
-            for (req in NativeProbeSpec.yuketangLeafInfoRequests(
-                host, cookies, cid, candidateId, uv
-            )) {
-                val res = execute(req)
-                results.put(res)
-                // ★ §75：`leaf_info` 已通，从 content_info.leaf_type_id 回填题目接口要的参数。
-                //   上一版直接拿「节点 id」当 leafTypeId 打 get_exercise_list，
-                //   服务端回 `No permissions` —— id 用错了，不是没权限。
-                if (res.optInt("status") == 200) {
-                    val parsed = parseLeafInfo(res.optString("sample"))
-                    if (leafTypeId == null) leafTypeId = parsed.first
-                    if (skuId == null) skuId = parsed.second
-                }
-            }
-            root.put("leafTypeId", leafTypeId ?: "")
-            root.put("skuId", skuId ?: "")
-            // 题目列表：先用真实 leaf_type_id 打单段；再按 Raincourse 写法打两段。
-            for (req in NativeProbeSpec.yuketangExerciseRequests(
-                host, cookies, leafTypeId, candidateId, skuId, uv
-            )) {
-                results.put(execute(req))
-            }
-            if (candidateLeafType == "5" && !leafTypeId.isNullOrBlank()) {
-                results.put(
-                    execute(
-                        NativeProbeSpec.yuketangExamCoverRequest(
-                            host, cookies, leafTypeId, cid
-                        )
-                    )
-                )
-            }
-        }
-        root.put("results", results)
+        // ★ §92 精简：删掉探路期的「作业详情 / 题目列表 / 考试封面」探测。
+        //   这三条当初用来回答「作业里面有什么、截止时间在哪」，
+        //   结论已定：作业清单直接来自 logs 活动流（带 deadline + type），
+        //   题目内容不是本功能需要的数据。每次抓取少发约 5 个请求。
+
         root.put("summary", yuketangSummary(root, results, leafCounts, withDeadline))
         return root
     }
@@ -1009,97 +961,6 @@ object NativeProbeRunner {
     }
 
     /**
-     * `leaf_info` 响应 → (leaf_type_id, sku_id)。
-     *
-     * ★ §75 实测：`data.content_info.leaf_type_id` 才是题目接口要的参数
-     *   （拿章节树里的节点 `id` 去打 `get_exercise_list` 会回 `No permissions`）。
-     *   `sku_id` 在 `data.sku_id`，给「两段式」写法备用。
-     */
-    fun parseLeafInfo(json: String?): Pair<String?, String?> {
-        if (json.isNullOrBlank()) return null to null
-        val obj = runCatching { JSONObject(json) }.getOrNull() ?: return null to null
-        val data = obj.optJSONObject("data") ?: return null to null
-        val contentInfo = data.optJSONObject("content_info")
-        val leafTypeId = contentInfo?.optLong("leaf_type_id", 0L)
-            ?.takeIf { it > 0L }?.toString()
-        val skuId = data.optLong("sku_id", 0L).takeIf { it > 0L }?.toString()
-        return leafTypeId to skuId
-    }
-
-    /** 课程列表 → (classroom_id, course_name, course_sign)。 */
-    fun parseYuketangCourses(json: String?): List<Triple<String, String, String?>> {
-        if (json.isNullOrBlank()) return emptyList()
-        val out = mutableListOf<Triple<String, String, String?>>()
-        val obj = runCatching { JSONObject(json) }.getOrNull() ?: return emptyList()
-        val list = obj.optJSONObject("data")?.optJSONArray("product_list") ?: return emptyList()
-        for (i in 0 until list.length()) {
-            val c = list.optJSONObject(i) ?: continue
-            val cid = c.optLong("classroom_id", 0L)
-            if (cid <= 0L) continue
-            out += Triple(
-                cid.toString(),
-                c.optString("course_name"),
-                c.optString("course_sign").ifBlank { null }
-            )
-        }
-        return out
-    }
-
-    /**
-     * 章节树 → 扁平节点列表。
-     *
-     * ★ §74 调研订正，两个必须照做的点：
-     *   1. `section_leaf_list[]` 里的节点**可能是叶子本身，也可能带嵌套 `leaf_list`**
-     *      —— 只处理顶层会漏掉一半作业节点（多数开源脚本就栽在这）。
-     *   2. `start_time` / `end_time` / `score_deadline` 都是 **Unix 毫秒**，
-     *      且 **`0` 表示「无限制」**，不是 1970 年。这里原样保留 0，
-     *      由 [isDeadlineUsable] 统一判定，避免下游把 0 当合法截止时间。
-     */
-    fun parseYuketangNodes(json: String?, courseName: String): List<JSONObject> {
-        if (json.isNullOrBlank()) return emptyList()
-        val obj = runCatching { JSONObject(json) }.getOrNull() ?: return emptyList()
-        val data = obj.optJSONObject("data") ?: return emptyList()
-        val out = mutableListOf<JSONObject>()
-        val chapters = data.optJSONArray("course_chapter") ?: return emptyList()
-        for (i in 0 until chapters.length()) {
-            val ch = chapters.optJSONObject(i) ?: continue
-            val leaves = ch.optJSONArray("section_leaf_list") ?: continue
-            walkLeaves(leaves, courseName, out)
-        }
-        return out
-    }
-
-    /** 递归收集叶子：有 `leaf_list` 就先往里走，否则当前节点本身算一片叶子。 */
-    private fun walkLeaves(
-        arr: org.json.JSONArray,
-        courseName: String,
-        out: MutableList<JSONObject>
-    ) {
-        for (j in 0 until arr.length()) {
-            val n = arr.optJSONObject(j) ?: continue
-            val nested = n.optJSONArray("leaf_list")
-            if (nested != null) {
-                walkLeaves(nested, courseName, out)
-                continue
-            }
-            val id = n.optLong("id", 0L)
-            if (id <= 0L) continue
-            out += JSONObject().apply {
-                put("course", courseName)
-                put("name", n.optString("name"))
-                put("leaf_type", n.optString("leaf_type"))
-                put("id", id)
-                // 毫秒；0 = 无限制（不是 1970）。
-                put("end_time", n.optLong("end_time", 0L))
-                put("score_deadline", n.optLong("score_deadline", 0L))
-                put("start_time", n.optLong("start_time", 0L))
-                put("leafinfo_id", n.optLong("leafinfo_id", 0L))
-                put("is_assessed", n.optBoolean("is_assessed", false))
-            }
-        }
-    }
-
-    /**
      * 作业（6）与考试（5）才是要转成待办的类型；其余是课件 / 公告 / 讨论 / 视频。
      *
      * `leaf_type` 枚举有两份独立源码互证：
@@ -1129,22 +990,6 @@ object NativeProbeRunner {
      */
     fun isDeadlineUsable(millis: Long): Boolean =
         millis > 0L && millis in 1_500_000_000_000L..4_102_444_800_000L
-
-    /**
-     * 挑一个节点去打详情接口：作业（6）/考试（5）优先，
-     * 一个都没有就退回第一个有 id 的节点 —— 用来区分「路由不通」与「本课确实没作业」。
-     */
-    fun firstLeafWithId(nodes: org.json.JSONArray): String? {
-        var fallback: String? = null
-        for (i in 0 until nodes.length()) {
-            val n = nodes.optJSONObject(i) ?: continue
-            val id = n.optLong("id", 0L)
-            if (id <= 0L) continue
-            if (isHomeworkOrExam(n.optString("leaf_type"))) return id.toString()
-            if (fallback == null) fallback = id.toString()
-        }
-        return fallback
-    }
 
     // ---------------------------------------------------------------------
     // 公共

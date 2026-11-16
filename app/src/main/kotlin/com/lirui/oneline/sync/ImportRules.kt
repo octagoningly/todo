@@ -72,21 +72,45 @@ object ImportRules {
     }
 
     /**
-     * 截止毫秒 → (日期, 时刻)。
+     * ★ §91 **截止时间归一**：平台给 `某天 00:00` 时，真实截止是**前一天 23:59**。
      *
-     * ★ **`00:00` 的处理**（实测踩到的坑）：
-     *   课堂派「5.3 Delta函数」的 endtime 是 `2026-11-19 00:00`。
-     *   平台的语义是「**19 号结束**」，而不是「19 号零点就截止」。
-     *   若原样显示 `00:00`，用户会以为 18 号晚上 24 点前要交，
-     *   实际还有一整天。这里统一改成 `23:59`，并在测试里钉死。
+     * 用户明确要求：「如果作业的截止时间是某天的 0:00 分，就将这个时间导入为
+     * 某天的前一天的 23:59 分」。
+     *
+     * 语义依据：课堂派「5.3 Delta函数」的 `endtime = 2026-11-19 00:00`，
+     * 平台的真实意思是「**19 号结束**」，也就是 18 号最后一刻。
+     * 之前只在**显示**上改成 23:59，但落库的 `dueAtMillis` 仍是 19 号 00:00，
+     * 导致提醒排在 19 号零点（比真实截止晚 1 分钟），而且列表排序也会差一天。
+     *
+     * 现在统一在**入口**就把毫秒值改掉：`00:00` → 前一天 `23:59`（减 1 分钟）。
+     * 非零点的截止（如雨课堂 `22:00`）原样保留。
+     */
+    fun normalizeDeadline(millis: Long, zone: ZoneId = ZoneId.of("Asia/Shanghai")): Long {
+        if (millis <= 0L) return millis
+        val zdt = Instant.ofEpochMilli(millis).atZone(zone)
+        // 只在「恰好 0 点整」时调整；0:00:30 这种脏值也一并当 0 点处理更安全。
+        if (zdt.toLocalTime().isBefore(LocalTime.of(0, 1))) {
+            return millis - 60_000L
+        }
+        return millis
+    }
+
+    /**
+     * 截止毫秒 → (日期, 时刻)，**按归一后的时间显示**。
+     *
+     * 归一后 0 点已变成前一天 23:59，所以这里不再需要特判 0 点，
+     * 但保留一次兜底（万一上游漏调 [normalizeDeadline]）。
      */
     fun deadlineParts(millis: Long, zone: ZoneId = ZoneId.of("Asia/Shanghai")): Pair<String, String> {
-        val zdt = Instant.ofEpochMilli(millis).atZone(zone)
-        val date = zdt.toLocalDate()
-        val time = zdt.toLocalTime()
-        // 0 点视为「当天结束」
-        val shown = if (time == LocalTime.MIDNIGHT) LocalTime.of(23, 59) else time
-        return date.toString() to String.format("%02d:%02d", shown.hour, shown.minute)
+        val normalized = normalizeDeadline(millis, zone)
+        val zdt = Instant.ofEpochMilli(normalized).atZone(zone)
+        val shown = if (zdt.toLocalTime().isBefore(LocalTime.of(0, 1))) {
+            LocalTime.of(23, 59)
+        } else {
+            zdt.toLocalTime()
+        }
+        return zdt.toLocalDate().toString() to
+            String.format("%02d:%02d", shown.hour, shown.minute)
     }
 
     /**
@@ -102,8 +126,8 @@ object ImportRules {
     ): Boolean {
         // 1. 必须有绝对、可用的截止时间（0 与越界值都排除）
         if (!NativeProbeRunner.isDeadlineUsable(item.deadlineMillis)) return false
-        // 2. 必须未过期
-        if (item.deadlineMillis <= nowMillis) return false
+        // 2. 必须未过期（用**归一后**的时间判，否则 00:00 那条会多活一分钟）
+        if (normalizeDeadline(item.deadlineMillis) <= nowMillis) return false
         // 3. 必须有科目与标题
         if (item.courseName.isBlank() || item.title.isBlank()) return false
         return true

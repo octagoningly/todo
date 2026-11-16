@@ -59,11 +59,17 @@ class TodoRepository(private val context: Context) {
             val title = com.lirui.oneline.sync.ImportRules.todoTitle(
                 item.courseName, item.kind, item.title
             )
+            // ★ §91：落库前统一归一「00:00 → 前一天 23:59」。
+            //   平台的 00:00 语义是「当天结束」，若原样存零点：
+            //   - 提醒会排在零点（比真实截止晚 1 分钟）；
+            //   - 列表排序会差一天；
+            //   - 用户看到的日期也不是他理解的"19 号截止"。
+            val due = com.lirui.oneline.sync.ImportRules.normalizeDeadline(item.deadlineMillis)
             val id = dao.insert(
                 Todo(
                     title = title,
                     detail = "",
-                    dueAtMillis = item.deadlineMillis,
+                    dueAtMillis = due,
                     hasExactTime = true,
                     source = source,
                     externalId = item.externalId
@@ -73,7 +79,7 @@ class TodoRepository(private val context: Context) {
             added++
             // 排提醒：与手动添加同一条路径，精确时刻 + 开始日/结束日都传。
             ReminderScheduler.scheduleBlocking(
-                context, id, item.deadlineMillis, true, null, null
+                context, id, due, true, null, null
             )
         }
         return added to skipped

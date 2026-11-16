@@ -49,12 +49,30 @@ class ImportRulesTest {
     }
 
     @Test
-    fun `midnight deadline shows as end of day not zero hour`() {
-        // ★ 真机：课堂派「5.3 Delta函数」endtime = 2026-11-19 00:00，
-        //   平台语义是「19 号结束」。若显示成 00:00 用户会以为 18 号夜里就截止。
+    fun `midnight deadline becomes previous day 2359`() {
+        // ★ §91 用户明确要求：截止时间是某天 0:00 时，要导入成**前一天 23:59**。
+        //   课堂派「5.3 Delta函数」endtime = 2026-11-19 00:00，
+        //   平台语义是「19 号结束」，即 18 号最后一刻。
         val (date, time) = ImportRules.deadlineParts(ms("2026-11-19", "00:00"))
-        assertEquals("2026-11-19", date)
+        assertEquals("2026-11-18", date)
         assertEquals("23:59", time)
+        // 归一后的真实时间戳也要对得上（不只是显示）。
+        assertEquals(
+            ms("2026-11-18", "23:59"),
+            ImportRules.normalizeDeadline(ms("2026-11-19", "00:00"))
+        )
+    }
+
+    @Test
+    fun `normalizeDeadline leaves non midnight untouched`() {
+        // 雨课堂「Homework_7」22:00 这种真实时刻不该被改。
+        val d = ms("2026-11-17", "22:00")
+        assertEquals(d, ImportRules.normalizeDeadline(d))
+        // 09:00 同理
+        val d2 = ms("2026-11-22", "09:00")
+        assertEquals(d2, ImportRules.normalizeDeadline(d2))
+        // 0 值原样返回，不变成负数
+        assertEquals(0L, ImportRules.normalizeDeadline(0L))
     }
 
     @Test

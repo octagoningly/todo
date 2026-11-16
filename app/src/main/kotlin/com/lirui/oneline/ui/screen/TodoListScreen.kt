@@ -1559,6 +1559,78 @@ private fun ArchivedList(
     }
 }
 
+/**
+ * ★ §94 一级设置页：只有 9 个大标题，点一个进二级页。
+ *
+ * 为什么做这个：原来一页纵向排开 9 节、587 行 LazyColumn 内容，
+ * 滑一次要划好几屏，找「外观」这种不常用项得翻很久。
+ * 现在一级页一屏能看全，二级页每页只放一件事。
+ */
+@Composable
+private fun SettingsIndex(
+    listState: LazyListState,
+    topInset: Dp,
+    onOpen: (SettingsSection) -> Unit
+) {
+    androidx.compose.foundation.lazy.LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            end = 16.dp,
+            top = topInset + TOP_BAR_BODY_HEIGHT + 8.dp,
+            bottom = 8.dp
+        ),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            SettingsCard {
+                SettingsSection.entries.forEachIndexed { index, section ->
+                    if (index > 0) ItemDivider()
+                    ListItem(
+                        headlineContent = { Text(section.title) },
+                        supportingContent = {
+                            Text(
+                                section.sub,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        trailingContent = {
+                            Icon(
+                                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        modifier = Modifier.clickable { onOpen(section) }
+                    )
+                }
+            }
+        }
+        item { Spacer(Modifier.height(24.dp)) }
+    }
+}
+
+/**
+ * ★ §94 设置页的分节。一级页只列这些标题，点进去才是二级页。
+ *
+ * 顺序就是一级页的显示顺序，与原来纵向排列的顺序一致
+ * （提醒在最上：它决定提醒到底响不响，是最重要的一节）。
+ */
+private enum class SettingsSection(val title: String, val sub: String) {
+    REMINDER("提醒", "通知权限、精确闹钟、电池白名单、提醒行为"),
+    NOTIFICATION("通知", "标题模板与提醒文案"),
+    APPEARANCE("外观", "主题、配色、深色卡片、页面切换动效"),
+    GESTURE("操作", "右滑归档、长按编辑、双击编辑、沉浸式顶栏"),
+    WIDGET("小组件", "显示项、添加桌面组件"),
+    LIST("列表与待办", "首页板块、分组档位、默认时刻、自动顺延"),
+    DATA("数据", "导出备份、恢复备份"),
+    HOMEWORK("作业自动导入", "登录第三方平台、抓取作业、同步时机"),
+    TEST("测试", "发通知、建测试待办")
+}
+
 @Composable
 private fun SettingsScreen(
     themeMode: Int,
@@ -1601,6 +1673,9 @@ private fun SettingsScreen(
     val context = LocalContext.current
     // Used to keep at least one board visible.
     val visibleBoardCount = boardOrder.count { it !in hiddenBoards }
+
+    // ★ §94 两级设置：null = 一级页（只显示大标题）；非 null = 进入该节二级页。
+    var openSection by remember { mutableStateOf<SettingsSection?>(null) }
 
     // ── 数据导出 / 本地恢复（v1.0.11）──
     // 全程走系统文件选择器（SAF）：不需要任何权限，也不新增网络权限。
@@ -1694,6 +1769,18 @@ private fun SettingsScreen(
     var quotesText by remember { mutableStateOf(initialQuotesText) }
     var savedQuotesText by remember { mutableStateOf(initialQuotesText) }
     var quotesExpanded by remember { mutableStateOf(false) }
+    // ★ §94 两级设置界面
+    //   一级：9 个大标题，点进去看二级页。原来 587 行的超长列表压到 9 行。
+    //   二级：再点标题左侧的返回，回到一级。
+    if (openSection == null) {
+        SettingsIndex(
+            listState = listState,
+            topInset = topInset,
+            onOpen = { openSection = it }
+        )
+        return
+    }
+
     androidx.compose.foundation.lazy.LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxWidth(),
@@ -1708,577 +1795,639 @@ private fun SettingsScreen(
         // 节标题的 top/bottom padding 相应调小，保证节与节之间的视觉留白不变。
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // ═══ 1. 提醒（v0.6 置顶；v0.9.1 可靠性 + 行为合并成**同一张卡**）═══
-        // zuige 拍板：这一节决定"提醒到底响不响"，是整个 App 最重要的设置，必须放第一且强调。
-        // 强调方式：标题恒定显示状态徽章 —— 有未放行项时整行转红并写明后果，全齐时显示"已就绪"。
-        // 合并「后台常驻」：它和可靠性是同一件事的两半（系统放不放行 / 用户愿不愿意付常驻通知的代价），
-        // 拆成两节会让人以为常驻是可有可无的装饰。
+        // ★ §94 返回栏：点左侧箭头回一级页
         item {
-            val pending = listOf(notificationsOk, exactOk).count { !it }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "提醒",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = if (pending > 0) MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(start = 8.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { openSection = null }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = "返回",
+                    // 没有 KeyboardArrowLeft（只引了 icons-core），把右箭头转 180° 当左箭头用。
+                    modifier = Modifier.graphicsLayer { rotationZ = 180f },
+                    tint = MaterialTheme.colorScheme.primary
                 )
-                Spacer(Modifier.width(8.dp))
                 Text(
-                    if (pending > 0) "$pending 项待处理，提醒可能不响" else "已就绪",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (pending > 0) MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.onSurfaceVariant
+                    openSection?.title ?: "设置",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 4.dp)
                 )
             }
         }
-        item {
-            ReliabilitySection(
-                notificationsOk = notificationsOk,
-                exactOk = exactOk,
-                onExactAlarmSettings = onExactAlarmSettings,
-                onStateRefresh = { reliabilityTick++ },
-                // 提醒行为接在**同一张卡**里（v0.9.1 补丁）。原来它是独立的第二张卡：
-                // 两张卡在真机上边贴边，看着像一张卡被拦腰切开；而"响不响"和"什么时候响"
-                // 本来就是一件事，拆成两张卡没有任何信息量。
-                behavior = {
-                    ToggleItem("开启提醒", "全部提醒的总开关", remindersEnabled, onSetRemindersEnabled)
-                    ItemDivider()
-                    ToggleItem("到点提醒", "设定时间到了再响一次", remindAtDue, onSetRemindAtDue)
-                    ItemDivider()
-                    ToggleItem("提前提醒", "提前 7/3/1 天与 1 小时", remindInAdvance, onSetRemindInAdvance)
-                    // ↓ 原「逾期处理」「待办行为(默认时刻)」两节并入这里：
-                    //   它们和到点/提前一样都是"什么时候响"，不该被外观类设置隔开。
-                    ItemDivider()
-                    ToggleItem("逾期反复叮嘱", "过期后按间隔再提醒", overdueNag, onSetOverdueNag)
-                    // 打开开关后"提醒间隔"不该让整张卡片突然长高一截
-                    AnimatedVisibility(
-                        visible = overdueNag,
-                        enter = expandVertically() + fadeIn(),
-                        exit = shrinkVertically() + fadeOut()
-                    ) {
-                        Column {
-                            ItemDivider()
-                            SettingsDropdown(
-                                label = "提醒间隔",
-                                options = listOf(6 to "6小时", 12 to "12小时", 24 to "1天", 48 to "2天"),
-                                selectedValue = overdueInterval,
-                                onSelect = onSetOverdueInterval
-                            )
+
+        // ★ §94 二级页：只显示当前进入的那一节
+        if (openSection == SettingsSection.REMINDER) {
+            // ═══ 1. 提醒（v0.6 置顶；v0.9.1 可靠性 + 行为合并成**同一张卡**）═══
+            // zuige 拍板：这一节决定"提醒到底响不响"，是整个 App 最重要的设置，必须放第一且强调。
+            // 强调方式：标题恒定显示状态徽章 —— 有未放行项时整行转红并写明后果，全齐时显示"已就绪"。
+            // 合并「后台常驻」：它和可靠性是同一件事的两半（系统放不放行 / 用户愿不愿意付常驻通知的代价），
+            // 拆成两节会让人以为常驻是可有可无的装饰。
+            item {
+                val pending = listOf(notificationsOk, exactOk).count { !it }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "提醒",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (pending > 0) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 8.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        if (pending > 0) "$pending 项待处理，提醒可能不响" else "已就绪",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (pending > 0) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            item {
+                ReliabilitySection(
+                    notificationsOk = notificationsOk,
+                    exactOk = exactOk,
+                    onExactAlarmSettings = onExactAlarmSettings,
+                    onStateRefresh = { reliabilityTick++ },
+                    // 提醒行为接在**同一张卡**里（v0.9.1 补丁）。原来它是独立的第二张卡：
+                    // 两张卡在真机上边贴边，看着像一张卡被拦腰切开；而"响不响"和"什么时候响"
+                    // 本来就是一件事，拆成两张卡没有任何信息量。
+                    behavior = {
+                        ToggleItem("开启提醒", "全部提醒的总开关", remindersEnabled, onSetRemindersEnabled)
+                        ItemDivider()
+                        ToggleItem("到点提醒", "设定时间到了再响一次", remindAtDue, onSetRemindAtDue)
+                        ItemDivider()
+                        ToggleItem("提前提醒", "提前 7/3/1 天与 1 小时", remindInAdvance, onSetRemindInAdvance)
+                        // ↓ 原「逾期处理」「待办行为(默认时刻)」两节并入这里：
+                        //   它们和到点/提前一样都是"什么时候响"，不该被外观类设置隔开。
+                        ItemDivider()
+                        ToggleItem("逾期反复叮嘱", "过期后按间隔再提醒", overdueNag, onSetOverdueNag)
+                        // 打开开关后"提醒间隔"不该让整张卡片突然长高一截
+                        AnimatedVisibility(
+                            visible = overdueNag,
+                            enter = expandVertically() + fadeIn(),
+                            exit = shrinkVertically() + fadeOut()
+                        ) {
+                            Column {
+                                ItemDivider()
+                                SettingsDropdown(
+                                    label = "提醒间隔",
+                                    options = listOf(6 to "6小时", 12 to "12小时", 24 to "1天", 48 to "2天"),
+                                    selectedValue = overdueInterval,
+                                    onSelect = onSetOverdueInterval
+                                )
+                            }
                         }
+                        ItemDivider()
+                        SettingsDropdown(
+                            label = "默认提醒时刻",
+                            options = listOf(
+                                9 * 60 to "9:00", 12 * 60 to "12:00",
+                                18 * 60 to "18:00", 21 * 60 to "21:00"
+                            ),
+                            selectedValue = defaultMinuteOfDay,
+                            onSelect = onSetDefaultMinuteOfDay
+                        )
+                        Text(
+                            "只写日期、不写时间的待办，到这个时刻提醒。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
+                        )
+                    }
+                )
+            }
+            if (!exactOk) {
+                item {
+                    Text(
+                        "精确闹钟未开，提醒可能被延后",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                    )
+                }
+            }
+
+        }
+
+        // ★ §94 二级页：只显示当前进入的那一节
+        if (openSection == SettingsSection.NOTIFICATION) {
+            // ═══ 2. 通知 ═══
+            // 三个**并列**的折叠项（zuige 纠正：通知模板只含标题模板+完成后缀+预览，
+            // 与提醒文案、常驻通知文案是并列关系，不是包含关系）。
+            item { SectionHeader("通知") }
+            item {
+                SettingsCard {
+                    NotificationTitleEditor(
+                        template = notifTemplate,
+                        done = notifDone,
+                        dueWord = notifDueWord,
+                        dirty = notifTemplate != savedTemplate || notifDone != savedDone,
+                        onTemplateChange = { notifTemplate = it },
+                        onDoneChange = { notifDone = it },
+                        onSave = {
+                            // 一个按钮写两个字段：要么一起成功，要么一起不动。
+                            SettingsRepo.saveNotificationTitle(context, notifTemplate, notifDone)
+                            savedTemplate = notifTemplate
+                            savedDone = notifDone
+                            Toast.makeText(context, "通知标题已保存", Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                    ItemDivider()
+                    QuotesEditor(
+                        text = quotesText,
+                        expanded = quotesExpanded,
+                        dirty = quotesText != savedQuotesText,
+                        count = quotesText.lineSequence().count { it.isNotBlank() },
+                        onToggle = { quotesExpanded = !quotesExpanded },
+                        onTextChange = { quotesText = it },
+                        onRestoreDefault = { quotesText = builtinQuotesText },
+                        onSave = {
+                            val normalized = quotesText.lineSequence()
+                                .map { it.trim() }
+                                .filter { it.isNotEmpty() }
+                                .distinct()
+                                .toList()
+                            SettingsRepo.setCustomQuotes(context, normalized)
+                            // 清空 = 恢复默认（SettingsRepo 会删掉键）。界面上也切回默认池，
+                            // 否则"我清空了但通知里还有文案"看起来像没保存。
+                            val applied = if (normalized.isEmpty()) builtinQuotesText
+                            else normalized.joinToString("\n")
+                            quotesText = applied
+                            savedQuotesText = applied
+                            Toast.makeText(
+                                context,
+                                if (normalized.isEmpty()) "已恢复默认文案" else "文案已保存（${normalized.size} 条）",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    )
+                    ItemDivider()
+                    KeepAliveNotifEditor()
+                }
+            }
+
+            // （v0.6：「提醒可靠性」「后台常驻」已上移为第一节 —— 它们是本页最重要的设置。）
+            // （v0.6.2：「测试」下移到全页最后 —— 低频排障项不该夹在日常设置中间。）
+
+        }
+
+        // ★ §94 二级页：只显示当前进入的那一节
+        if (openSection == SettingsSection.APPEARANCE) {
+            // ═══ 3. 外观 ═══
+            item { SectionHeader("外观") }
+            item {
+                SettingsCard {
+                    ThemeDropdown(themeMode, onSetThemeMode)
+                    ItemDivider()
+                    // 换配色要顺手刷新组件：圆圈描边取的是当前配色的主色，
+                    // 不刷新的话桌面上那个圈还是旧颜色。
+                    PaletteDropdown(paletteId) { id ->
+                        onSetPalette(id)
+                        WidgetUpdater.refreshAsync(context)
                     }
                     ItemDivider()
+                    // 深色模式下的卡片底色。v0.9.1 起档位选择一律走下拉（全页只用一种选择控件）。
                     SettingsDropdown(
-                        label = "默认提醒时刻",
-                        options = listOf(
-                            9 * 60 to "9:00", 12 * 60 to "12:00",
-                            18 * 60 to "18:00", 21 * 60 to "21:00"
-                        ),
-                        selectedValue = defaultMinuteOfDay,
-                        onSelect = onSetDefaultMinuteOfDay
+                        label = "深色卡片底色",
+                        valueText = DarkCardStyle.byId(darkCardStyleId).label,
+                        options = DarkCardStyle.all.map { it.id to it.label },
+                        selectedValue = darkCardStyleId,
+                        onSelect = onSetDarkCardStyle
                     )
                     Text(
-                        "只写日期、不写时间的待办，到这个时刻提醒。",
+                        DarkCardStyle.byId(darkCardStyleId).sub,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
                     )
-                }
-            )
-        }
-        if (!exactOk) {
-            item {
-                Text(
-                    "精确闹钟未开，提醒可能被延后",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                )
-            }
-        }
-
-        // ═══ 2. 通知 ═══
-        // 三个**并列**的折叠项（zuige 纠正：通知模板只含标题模板+完成后缀+预览，
-        // 与提醒文案、常驻通知文案是并列关系，不是包含关系）。
-        item { SectionHeader("通知") }
-        item {
-            SettingsCard {
-                NotificationTitleEditor(
-                    template = notifTemplate,
-                    done = notifDone,
-                    dueWord = notifDueWord,
-                    dirty = notifTemplate != savedTemplate || notifDone != savedDone,
-                    onTemplateChange = { notifTemplate = it },
-                    onDoneChange = { notifDone = it },
-                    onSave = {
-                        // 一个按钮写两个字段：要么一起成功，要么一起不动。
-                        SettingsRepo.saveNotificationTitle(context, notifTemplate, notifDone)
-                        savedTemplate = notifTemplate
-                        savedDone = notifDone
-                        Toast.makeText(context, "通知标题已保存", Toast.LENGTH_SHORT).show()
+                    ItemDivider()
+                    // 页面切换动效（§63）：总闸，关掉后四个 tab 与顶栏标题都硬切。
+                    // ★ 状态由 TodoListScreen 持有（转场就在那棵 Compose 树里），所以走参数链，
+                    //   不像专注环那样在设置页内自读自写 —— 否则开关改了转场不会立刻重组。
+                    ToggleItem(
+                        "页面切换动效",
+                        "切换四个 tab 时旧页文字先回撤、新页文字沿句末展开；关掉后直接硬切",
+                        pageMotion,
+                        onChecked = onSetPageMotion
+                    )
+                    ItemDivider()
+                    // 专注环动效（v1.0.8）：总闸 + 转动/扫光两个独立开关 + 脉冲间隔。
+                    // 和「操作」节的手势开关一样直接读写 SettingsRepo，不走 VM → MainActivity
+                    // 的参数链（专注页是覆盖层，下次重建时会把这四项重新读一遍）。
+                    var ringMotion by remember {
+                        mutableStateOf(SettingsRepo.focusRingMotion(context))
                     }
-                )
-                ItemDivider()
-                QuotesEditor(
-                    text = quotesText,
-                    expanded = quotesExpanded,
-                    dirty = quotesText != savedQuotesText,
-                    count = quotesText.lineSequence().count { it.isNotBlank() },
-                    onToggle = { quotesExpanded = !quotesExpanded },
-                    onTextChange = { quotesText = it },
-                    onRestoreDefault = { quotesText = builtinQuotesText },
-                    onSave = {
-                        val normalized = quotesText.lineSequence()
-                            .map { it.trim() }
-                            .filter { it.isNotEmpty() }
-                            .distinct()
-                            .toList()
-                        SettingsRepo.setCustomQuotes(context, normalized)
-                        // 清空 = 恢复默认（SettingsRepo 会删掉键）。界面上也切回默认池，
-                        // 否则"我清空了但通知里还有文案"看起来像没保存。
-                        val applied = if (normalized.isEmpty()) builtinQuotesText
-                        else normalized.joinToString("\n")
-                        quotesText = applied
-                        savedQuotesText = applied
-                        Toast.makeText(
-                            context,
-                            if (normalized.isEmpty()) "已恢复默认文案" else "文案已保存（${normalized.size} 条）",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                    var ringRotate by remember {
+                        mutableStateOf(SettingsRepo.focusRingRotation(context))
                     }
-                )
-                ItemDivider()
-                KeepAliveNotifEditor()
-            }
-        }
-
-        // （v0.6：「提醒可靠性」「后台常驻」已上移为第一节 —— 它们是本页最重要的设置。）
-        // （v0.6.2：「测试」下移到全页最后 —— 低频排障项不该夹在日常设置中间。）
-
-        // ═══ 3. 外观 ═══
-        item { SectionHeader("外观") }
-        item {
-            SettingsCard {
-                ThemeDropdown(themeMode, onSetThemeMode)
-                ItemDivider()
-                // 换配色要顺手刷新组件：圆圈描边取的是当前配色的主色，
-                // 不刷新的话桌面上那个圈还是旧颜色。
-                PaletteDropdown(paletteId) { id ->
-                    onSetPalette(id)
-                    WidgetUpdater.refreshAsync(context)
-                }
-                ItemDivider()
-                // 深色模式下的卡片底色。v0.9.1 起档位选择一律走下拉（全页只用一种选择控件）。
-                SettingsDropdown(
-                    label = "深色卡片底色",
-                    valueText = DarkCardStyle.byId(darkCardStyleId).label,
-                    options = DarkCardStyle.all.map { it.id to it.label },
-                    selectedValue = darkCardStyleId,
-                    onSelect = onSetDarkCardStyle
-                )
-                Text(
-                    DarkCardStyle.byId(darkCardStyleId).sub,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
-                )
-                ItemDivider()
-                // 页面切换动效（§63）：总闸，关掉后四个 tab 与顶栏标题都硬切。
-                // ★ 状态由 TodoListScreen 持有（转场就在那棵 Compose 树里），所以走参数链，
-                //   不像专注环那样在设置页内自读自写 —— 否则开关改了转场不会立刻重组。
-                ToggleItem(
-                    "页面切换动效",
-                    "切换四个 tab 时旧页文字先回撤、新页文字沿句末展开；关掉后直接硬切",
-                    pageMotion,
-                    onChecked = onSetPageMotion
-                )
-                ItemDivider()
-                // 专注环动效（v1.0.8）：总闸 + 转动/扫光两个独立开关 + 脉冲间隔。
-                // 和「操作」节的手势开关一样直接读写 SettingsRepo，不走 VM → MainActivity
-                // 的参数链（专注页是覆盖层，下次重建时会把这四项重新读一遍）。
-                var ringMotion by remember {
-                    mutableStateOf(SettingsRepo.focusRingMotion(context))
-                }
-                var ringRotate by remember {
-                    mutableStateOf(SettingsRepo.focusRingRotation(context))
-                }
-                var ringShimmer by remember {
-                    mutableStateOf(SettingsRepo.focusRingShimmer(context))
-                }
-                var ringInterval by remember {
-                    mutableStateOf(SettingsRepo.focusRingIntervalSeconds(context))
-                }
-                ToggleItem(
-                    "专注环动效",
-                    "总开关；关掉后环完全静止，下面三项仍会保留你的设置",
-                    ringMotion,
-                    onChecked = { on ->
-                        SettingsRepo.setFocusRingMotion(context, on)
-                        ringMotion = on
+                    var ringShimmer by remember {
+                        mutableStateOf(SettingsRepo.focusRingShimmer(context))
                     }
-                )
-                ItemDivider()
-                ToggleItem(
-                    "环转动",
-                    "每次脉冲把波浪环转过半瓣（20°），约 1.1 秒缓动",
-                    ringRotate,
-                    onChecked = { on ->
-                        SettingsRepo.setFocusRingRotation(context, on)
-                        ringRotate = on
+                    var ringInterval by remember {
+                        mutableStateOf(SettingsRepo.focusRingIntervalSeconds(context))
                     }
-                )
-                ItemDivider()
-                ToggleItem(
-                    "流光扫过",
-                    "进度弧上一道柔光一闪而过，约 0.9 秒",
-                    ringShimmer,
-                    onChecked = { on ->
-                        SettingsRepo.setFocusRingShimmer(context, on)
-                        ringShimmer = on
-                    }
-                )
-                ItemDivider()
-                SettingsDropdown(
-                    label = "动效间隔",
-                    options = SettingsRepo.FOCUS_RING_INTERVAL_OPTIONS,
-                    selectedValue = ringInterval,
-                    onSelect = { v ->
-                        SettingsRepo.setFocusRingIntervalSeconds(context, v)
-                        ringInterval = v
-                    }
-                )
-            }
-        }
-
-        // ═══ 4. 操作（v0.9.1）═══
-        // zuige 拍板：手势不再硬编码，统一收到这一节；沉浸式顶栏也从「外观」移进来 ——
-        // 它和手势是同一类东西（"我怎么操作这个列表"），不是配色/字号那种外观。
-        item { SectionHeader("操作") }
-        item {
-            SettingsCard {
-                // 同「小组件」节的局部状态模式：直接读写 SettingsRepo，不走 VM 参数链。
-                // 列表页读的是同一份 SP（TodoList 的 rememberGestures），切回列表即生效。
-                var swipeArchive by remember {
-                    mutableStateOf(SettingsRepo.gestureSwipeArchive(context))
-                }
-                var longPressEdit by remember {
-                    mutableStateOf(SettingsRepo.gestureLongPressEdit(context))
-                }
-                var doubleTapEdit by remember {
-                    mutableStateOf(SettingsRepo.gestureDoubleTapEdit(context))
-                }
-                ToggleItem(
-                    "右滑归档",
-                    "待办行向右滑过一定距离就归档",
-                    swipeArchive,
-                    onChecked = { on ->
-                        SettingsRepo.setGestureSwipeArchive(context, on)
-                        swipeArchive = on
-                    }
-                )
-                ItemDivider()
-                ToggleItem(
-                    "长按编辑",
-                    "按住待办行打开编辑",
-                    longPressEdit,
-                    onChecked = { on ->
-                        SettingsRepo.setGestureLongPressEdit(context, on)
-                        longPressEdit = on
-                    }
-                )
-                ItemDivider()
-                ToggleItem(
-                    "双击编辑",
-                    "连点两下打开编辑（单击本来没有动作，不会抢）",
-                    doubleTapEdit,
-                    onChecked = { on ->
-                        SettingsRepo.setGestureDoubleTapEdit(context, on)
-                        doubleTapEdit = on
-                    }
-                )
-                ItemDivider()
-                // 沉浸式顶栏：v0.6 曾随设置页重排退役，2026-10-23 按 zuige 要求接回，
-                // 默认关（首装就是固定顶栏）。开 = 上滑时顶栏跟着收起。
-                ToggleItem(
-                    "沉浸式顶栏",
-                    "开：上滑时顶栏跟着收起，内容能滚到状态栏下；关：顶栏固定",
-                    immersive,
-                    onChecked = { on ->
-                        SettingsRepo.setImmersiveTopBar(context, on)
-                        onSetImmersive(on)
-                    }
-                )
-            }
-        }
-
-        // ═══ 5. 小组件 ═══
-        // 四个开关，直接读写 SettingsRepo + 立即刷新组件
-        // （同 KeepAliveNotifEditor 的局部状态模式，不走 VM 参数链）。
-        // ★ 2026-10-23：不再按组件尺寸分档 —— vivo 桌面报的尺寸恒为 152px，
-        //   2×2 和 2×4 一样，按尺寸分开关必然出现"我明明拉到 2×4 却说我是 2×2"。
-        item { SectionHeader("小组件") }
-        item {
-            SettingsCard {
-                var showDate by remember {
-                    mutableStateOf(SettingsRepo.widgetShowDate(context))
-                }
-                var dateBelow by remember {
-                    mutableStateOf(SettingsRepo.widgetDateBelow(context))
-                }
-                var dateOnly by remember {
-                    mutableStateOf(SettingsRepo.widgetDateOnly(context))
-                }
-                var hideHeader by remember {
-                    mutableStateOf(SettingsRepo.widgetHideHeader(context))
-                }
-                // 「事件优先」只在"日期靠右"时才有意义（日期换到标题下方后，标题本来就独占整行）。
-                var eventPriority by remember {
-                    mutableStateOf(SettingsRepo.widgetEventPriority(context))
-                }
-                ToggleItem(
-                    "显示日期",
-                    "关掉后只显示事件，任何尺寸都生效",
-                    showDate,
-                    onChecked = { on ->
-                        SettingsRepo.setWidgetShowDate(context, on)
-                        showDate = on
-                        WidgetUpdater.refreshAsync(context)
-                    }
-                )
-                ItemDivider()
-                // 优先级开关：事件优先 = 日期挪到标题下方（标题占满整行）；
-                // 日期优先 = 日期放右侧、永远完整，标题太长才省略。
-                // 一个旋钮同时决定"放哪"和"谁让位"——这两件事本来就是同一件事：
-                // 2×2 只有约 132dp 宽，右侧放日期就必然挤事件，没有第三种可能。
-                SettingsDropdown(
-                    label = "日期位置",
-                    options = listOf(0 to "标题下方", 1 to "标题右侧"),
-                    selectedValue = if (dateBelow) 0 else 1,
-                    onSelect = { value ->
-                        val below = value == 0
-                        SettingsRepo.setWidgetDateBelow(context, below)
-                        dateBelow = below
-                        WidgetUpdater.refreshAsync(context)
-                    }
-                )
-                // 选项名只写位置，容易看不出效果；这里补一句当前档位的实际表现。
-                Text(
-                    if (dateBelow) "标题占满整行，日期换到下面"
-                    else "日期靠右显示，谁优先见下面的「事件优先」",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
-                )
-                // ★ 只在日期靠右时露出：日期放到标题下方之后标题独占整行，
-                //   "谁让谁"的问题不存在了（zuige 2026-10-23 明确）。
-                if (!dateBelow) {
+                    ToggleItem(
+                        "专注环动效",
+                        "总开关；关掉后环完全静止，下面三项仍会保留你的设置",
+                        ringMotion,
+                        onChecked = { on ->
+                            SettingsRepo.setFocusRingMotion(context, on)
+                            ringMotion = on
+                        }
+                    )
                     ItemDivider()
                     ToggleItem(
-                        "事件优先",
-                        "开：标题先占宽度、完整显示，日期太长才省略；关：日期完整，标题提前省略",
-                        eventPriority,
+                        "环转动",
+                        "每次脉冲把波浪环转过半瓣（20°），约 1.1 秒缓动",
+                        ringRotate,
                         onChecked = { on ->
-                            SettingsRepo.setWidgetEventPriority(context, on)
-                            eventPriority = on
-                            WidgetUpdater.refreshAsync(context)
+                            SettingsRepo.setFocusRingRotation(context, on)
+                            ringRotate = on
+                        }
+                    )
+                    ItemDivider()
+                    ToggleItem(
+                        "流光扫过",
+                        "进度弧上一道柔光一闪而过，约 0.9 秒",
+                        ringShimmer,
+                        onChecked = { on ->
+                            SettingsRepo.setFocusRingShimmer(context, on)
+                            ringShimmer = on
+                        }
+                    )
+                    ItemDivider()
+                    SettingsDropdown(
+                        label = "动效间隔",
+                        options = SettingsRepo.FOCUS_RING_INTERVAL_OPTIONS,
+                        selectedValue = ringInterval,
+                        onSelect = { v ->
+                            SettingsRepo.setFocusRingIntervalSeconds(context, v)
+                            ringInterval = v
                         }
                     )
                 }
-                ItemDivider()
-                ToggleItem(
-                    "只显示日期",
-                    "开=「10月23日」；关=「10月23日 14点」",
-                    dateOnly,
-                    onChecked = { on ->
-                        SettingsRepo.setWidgetDateOnly(context, on)
-                        dateOnly = on
-                        WidgetUpdater.refreshAsync(context)
-                    }
-                )
-                ItemDivider()
-                ToggleItem(
-                    "隐藏头部",
-                    "顶部「待办」标题和条数",
-                    hideHeader,
-                    onChecked = { on ->
-                        SettingsRepo.setWidgetHideHeader(context, on)
-                        hideHeader = on
-                        WidgetUpdater.refreshAsync(context)
-                    }
-                )
-                ItemDivider()
-                // v0.8.1：一键添加改为**手动指引** —— requestPinAppWidget 在澎湃/vivo 上
-                // 要么静默失败要么无响应（zuige 实测），与其依赖不可控的系统弹窗，
-                // 不如把路径说清楚。v0.9.1 起组件 label 同时含「Todo」和「待办」，两个词都能搜到。
-                ListItem(
-                    headlineContent = { Text("添加小组件到桌面") },
-                    supportingContent = { Text("长按桌面空白处 → 小组件 → 搜「Todo」或「待办」") },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    modifier = Modifier.clickable {
-                        Toast.makeText(
-                            context,
-                            "长按桌面空白处 → 小组件 → 搜「Todo」或「待办」",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                )
             }
+
         }
 
-        // ═══ 6. 列表与待办 ═══
-        item { SectionHeader("列表与待办") }
-        item {
-            SettingsCard {
-                ListItem(
-                    headlineContent = { Text("板块顺序", style = MaterialTheme.typography.bodyLarge) },
-                    supportingContent = {
-                        Text(
-                            "长按拖动排序，开关控制显隐",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-                )
-                ItemDivider()
-                ReorderableBoardList(
-                    order = boardOrder,
-                    hiddenBoards = hiddenBoards,
-                    canToggle = { board ->
-                        // 不允许把最后一个可见板块也关掉：首页会变空白，且没有入口回来。
-                        board in hiddenBoards || visibleBoardCount > 1
-                    },
-                    onReorder = onSetBoardOrder,
-                    onVisibleChange = { board, on ->
-                        onSetHiddenBoards(
-                            if (on) hiddenBoards - board else hiddenBoards + board
-                        )
+        // ★ §94 二级页：只显示当前进入的那一节
+        if (openSection == SettingsSection.GESTURE) {
+            // ═══ 4. 操作（v0.9.1）═══
+            // zuige 拍板：手势不再硬编码，统一收到这一节；沉浸式顶栏也从「外观」移进来 ——
+            // 它和手势是同一类东西（"我怎么操作这个列表"），不是配色/字号那种外观。
+            item { SectionHeader("操作") }
+            item {
+                SettingsCard {
+                    // 同「小组件」节的局部状态模式：直接读写 SettingsRepo，不走 VM 参数链。
+                    // 列表页读的是同一份 SP（TodoList 的 rememberGestures），切回列表即生效。
+                    var swipeArchive by remember {
+                        mutableStateOf(SettingsRepo.gestureSwipeArchive(context))
                     }
-                )
-                ItemDivider()
-                // 「有日期」板块内的分组（多选）。v0.9.1：从 chip 行改成多选下拉 ——
-                // 5 个分组铺成两行 chip 会把卡片撑得很高，而这里平时几乎不用改。
-                SettingsMultiDropdown(
-                    label = "「有日期」板块内的分组",
-                    options = HomeBucket.all.map { it to it.label },
-                    selected = homeBuckets,
-                    onToggle = { bucket, on ->
-                        onSetHomeBuckets(if (on) homeBuckets + bucket else homeBuckets - bucket)
+                    var longPressEdit by remember {
+                        mutableStateOf(SettingsRepo.gestureLongPressEdit(context))
                     }
-                )
-                Text(
-                    "没勾的并入下一档；全不勾则平铺",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
-                )
-                ItemDivider()
-                // 自动顺延属于"完成之后怎么办"，和首页列表的展示方式放在一起 ——
-                // 原「待办行为」节只剩它一个，单独占一节太空。
-                ToggleItem("自动顺延", "每天/每周/每月完成后顺延", autoRepeat, onSetAutoRepeat)
+                    var doubleTapEdit by remember {
+                        mutableStateOf(SettingsRepo.gestureDoubleTapEdit(context))
+                    }
+                    ToggleItem(
+                        "右滑归档",
+                        "待办行向右滑过一定距离就归档",
+                        swipeArchive,
+                        onChecked = { on ->
+                            SettingsRepo.setGestureSwipeArchive(context, on)
+                            swipeArchive = on
+                        }
+                    )
+                    ItemDivider()
+                    ToggleItem(
+                        "长按编辑",
+                        "按住待办行打开编辑",
+                        longPressEdit,
+                        onChecked = { on ->
+                            SettingsRepo.setGestureLongPressEdit(context, on)
+                            longPressEdit = on
+                        }
+                    )
+                    ItemDivider()
+                    ToggleItem(
+                        "双击编辑",
+                        "连点两下打开编辑（单击本来没有动作，不会抢）",
+                        doubleTapEdit,
+                        onChecked = { on ->
+                            SettingsRepo.setGestureDoubleTapEdit(context, on)
+                            doubleTapEdit = on
+                        }
+                    )
+                    ItemDivider()
+                    // 沉浸式顶栏：v0.6 曾随设置页重排退役，2026-10-23 按 zuige 要求接回，
+                    // 默认关（首装就是固定顶栏）。开 = 上滑时顶栏跟着收起。
+                    ToggleItem(
+                        "沉浸式顶栏",
+                        "开：上滑时顶栏跟着收起，内容能滚到状态栏下；关：顶栏固定",
+                        immersive,
+                        onChecked = { on ->
+                            SettingsRepo.setImmersiveTopBar(context, on)
+                            onSetImmersive(on)
+                        }
+                    )
+                }
             }
+
         }
 
-        // ═══ 7. 数据（v1.0.11）：纯本地导出 / 恢复 ═══
-        item { SectionHeader("数据") }
-        item {
-            SettingsCard {
-                ListItem(
-                    headlineContent = { Text("导出备份", style = MaterialTheme.typography.bodyLarge) },
-                    supportingContent = {
-                        Text(
-                            "待办（含归档）、专注记录与设置写入一个文件；明文 JSON，不联网",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    },
-                    trailingContent = {
-                        Text(
-                            "导出",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    modifier = Modifier.clickable {
-                        exportLauncher.launch(
-                            BackupRules.suggestedFileName(System.currentTimeMillis())
+        // ★ §94 二级页：只显示当前进入的那一节
+        if (openSection == SettingsSection.WIDGET) {
+            // ═══ 5. 小组件 ═══
+            // 四个开关，直接读写 SettingsRepo + 立即刷新组件
+            // （同 KeepAliveNotifEditor 的局部状态模式，不走 VM 参数链）。
+            // ★ 2026-10-23：不再按组件尺寸分档 —— vivo 桌面报的尺寸恒为 152px，
+            //   2×2 和 2×4 一样，按尺寸分开关必然出现"我明明拉到 2×4 却说我是 2×2"。
+            item { SectionHeader("小组件") }
+            item {
+                SettingsCard {
+                    var showDate by remember {
+                        mutableStateOf(SettingsRepo.widgetShowDate(context))
+                    }
+                    var dateBelow by remember {
+                        mutableStateOf(SettingsRepo.widgetDateBelow(context))
+                    }
+                    var dateOnly by remember {
+                        mutableStateOf(SettingsRepo.widgetDateOnly(context))
+                    }
+                    var hideHeader by remember {
+                        mutableStateOf(SettingsRepo.widgetHideHeader(context))
+                    }
+                    // 「事件优先」只在"日期靠右"时才有意义（日期换到标题下方后，标题本来就独占整行）。
+                    var eventPriority by remember {
+                        mutableStateOf(SettingsRepo.widgetEventPriority(context))
+                    }
+                    ToggleItem(
+                        "显示日期",
+                        "关掉后只显示事件，任何尺寸都生效",
+                        showDate,
+                        onChecked = { on ->
+                            SettingsRepo.setWidgetShowDate(context, on)
+                            showDate = on
+                            WidgetUpdater.refreshAsync(context)
+                        }
+                    )
+                    ItemDivider()
+                    // 优先级开关：事件优先 = 日期挪到标题下方（标题占满整行）；
+                    // 日期优先 = 日期放右侧、永远完整，标题太长才省略。
+                    // 一个旋钮同时决定"放哪"和"谁让位"——这两件事本来就是同一件事：
+                    // 2×2 只有约 132dp 宽，右侧放日期就必然挤事件，没有第三种可能。
+                    SettingsDropdown(
+                        label = "日期位置",
+                        options = listOf(0 to "标题下方", 1 to "标题右侧"),
+                        selectedValue = if (dateBelow) 0 else 1,
+                        onSelect = { value ->
+                            val below = value == 0
+                            SettingsRepo.setWidgetDateBelow(context, below)
+                            dateBelow = below
+                            WidgetUpdater.refreshAsync(context)
+                        }
+                    )
+                    // 选项名只写位置，容易看不出效果；这里补一句当前档位的实际表现。
+                    Text(
+                        if (dateBelow) "标题占满整行，日期换到下面"
+                        else "日期靠右显示，谁优先见下面的「事件优先」",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
+                    )
+                    // ★ 只在日期靠右时露出：日期放到标题下方之后标题独占整行，
+                    //   "谁让谁"的问题不存在了（zuige 2026-10-23 明确）。
+                    if (!dateBelow) {
+                        ItemDivider()
+                        ToggleItem(
+                            "事件优先",
+                            "开：标题先占宽度、完整显示，日期太长才省略；关：日期完整，标题提前省略",
+                            eventPriority,
+                            onChecked = { on ->
+                                SettingsRepo.setWidgetEventPriority(context, on)
+                                eventPriority = on
+                                WidgetUpdater.refreshAsync(context)
+                            }
                         )
                     }
-                )
-                ItemDivider()
-                ListItem(
-                    headlineContent = { Text("从备份恢复", style = MaterialTheme.typography.bodyLarge) },
-                    supportingContent = {
-                        Text(
-                            "先看清备份内容、选好恢复方式，再经两道确认才写入",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    },
-                    trailingContent = {
-                        Text(
-                            "选择",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    modifier = Modifier.clickable {
-                        importLauncher.launch(
-                            arrayOf(
-                                "application/json", "text/plain",
-                                "application/octet-stream", "*/*"
+                    ItemDivider()
+                    ToggleItem(
+                        "只显示日期",
+                        "开=「10月23日」；关=「10月23日 14点」",
+                        dateOnly,
+                        onChecked = { on ->
+                            SettingsRepo.setWidgetDateOnly(context, on)
+                            dateOnly = on
+                            WidgetUpdater.refreshAsync(context)
+                        }
+                    )
+                    ItemDivider()
+                    ToggleItem(
+                        "隐藏头部",
+                        "顶部「待办」标题和条数",
+                        hideHeader,
+                        onChecked = { on ->
+                            SettingsRepo.setWidgetHideHeader(context, on)
+                            hideHeader = on
+                            WidgetUpdater.refreshAsync(context)
+                        }
+                    )
+                    ItemDivider()
+                    // v0.8.1：一键添加改为**手动指引** —— requestPinAppWidget 在澎湃/vivo 上
+                    // 要么静默失败要么无响应（zuige 实测），与其依赖不可控的系统弹窗，
+                    // 不如把路径说清楚。v0.9.1 起组件 label 同时含「Todo」和「待办」，两个词都能搜到。
+                    ListItem(
+                        headlineContent = { Text("添加小组件到桌面") },
+                        supportingContent = { Text("长按桌面空白处 → 小组件 → 搜「Todo」或「待办」") },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        modifier = Modifier.clickable {
+                            Toast.makeText(
+                                context,
+                                "长按桌面空白处 → 小组件 → 搜「Todo」或「待办」",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    )
+                }
+            }
+
+        }
+
+        // ★ §94 二级页：只显示当前进入的那一节
+        if (openSection == SettingsSection.LIST) {
+            // ═══ 6. 列表与待办 ═══
+            item { SectionHeader("列表与待办") }
+            item {
+                SettingsCard {
+                    ListItem(
+                        headlineContent = { Text("板块顺序", style = MaterialTheme.typography.bodyLarge) },
+                        supportingContent = {
+                            Text(
+                                "长按拖动排序，开关控制显隐",
+                                style = MaterialTheme.typography.bodySmall
                             )
-                        )
-                    }
-                )
+                        },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                    )
+                    ItemDivider()
+                    ReorderableBoardList(
+                        order = boardOrder,
+                        hiddenBoards = hiddenBoards,
+                        canToggle = { board ->
+                            // 不允许把最后一个可见板块也关掉：首页会变空白，且没有入口回来。
+                            board in hiddenBoards || visibleBoardCount > 1
+                        },
+                        onReorder = onSetBoardOrder,
+                        onVisibleChange = { board, on ->
+                            onSetHiddenBoards(
+                                if (on) hiddenBoards - board else hiddenBoards + board
+                            )
+                        }
+                    )
+                    ItemDivider()
+                    // 「有日期」板块内的分组（多选）。v0.9.1：从 chip 行改成多选下拉 ——
+                    // 5 个分组铺成两行 chip 会把卡片撑得很高，而这里平时几乎不用改。
+                    SettingsMultiDropdown(
+                        label = "「有日期」板块内的分组",
+                        options = HomeBucket.all.map { it to it.label },
+                        selected = homeBuckets,
+                        onToggle = { bucket, on ->
+                            onSetHomeBuckets(if (on) homeBuckets + bucket else homeBuckets - bucket)
+                        }
+                    )
+                    Text(
+                        "没勾的并入下一档；全不勾则平铺",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
+                    )
+                    ItemDivider()
+                    // 自动顺延属于"完成之后怎么办"，和首页列表的展示方式放在一起 ——
+                    // 原「待办行为」节只剩它一个，单独占一节太空。
+                    ToggleItem("自动顺延", "每天/每周/每月完成后顺延", autoRepeat, onSetAutoRepeat)
+                }
             }
+
         }
 
-        // ═══ 8. 作业自动导入（实验分支，默认关闭；见 DESIGN.md 本版小节）═══
-        // 放在「数据」之后、「测试」之前：它是低频的账号类设置，
-        // 不该挤进每天都要看的提醒/外观，但也不该埋在排障项后面。
-        item { SectionHeader("作业自动导入") }
-        item { HomeworkSyncSection(context) }
-
-        // ═══ 9. 测试（全页最后）═══
-        item { SectionHeader("测试") }
-        item {
-            SettingsCard {
-                ListItem(
-                    headlineContent = { Text("发送测试通知") },
-                    // 文案统一成「动作 + 验证什么」：之前"弹一条带「完成」按钮的通知，验证权限、
-                    // 渠道与动作"偏术语，普通用户读不出"我现在该看什么"。
-                    supportingContent = { Text("立刻弹一条，验证通知和按钮") },
-                    trailingContent = {
-                        Text(
-                            "发送",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    modifier = Modifier.clickable(onClick = onTestNotification)
-                )
-                ItemDivider()
-                ListItem(
-                    headlineContent = { Text("新建测试待办") },
-                    supportingContent = { Text("建一条一分钟后到期的待办") },
-                    trailingContent = {
-                        Text(
-                            "创建",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    modifier = Modifier.clickable(onClick = onTestTodo)
-                )
+        // ★ §94 二级页：只显示当前进入的那一节
+        if (openSection == SettingsSection.DATA) {
+            // ═══ 7. 数据（v1.0.11）：纯本地导出 / 恢复 ═══
+            item { SectionHeader("数据") }
+            item {
+                SettingsCard {
+                    ListItem(
+                        headlineContent = { Text("导出备份", style = MaterialTheme.typography.bodyLarge) },
+                        supportingContent = {
+                            Text(
+                                "待办（含归档）、专注记录与设置写入一个文件；明文 JSON，不联网",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        },
+                        trailingContent = {
+                            Text(
+                                "导出",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        modifier = Modifier.clickable {
+                            exportLauncher.launch(
+                                BackupRules.suggestedFileName(System.currentTimeMillis())
+                            )
+                        }
+                    )
+                    ItemDivider()
+                    ListItem(
+                        headlineContent = { Text("从备份恢复", style = MaterialTheme.typography.bodyLarge) },
+                        supportingContent = {
+                            Text(
+                                "先看清备份内容、选好恢复方式，再经两道确认才写入",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        },
+                        trailingContent = {
+                            Text(
+                                "选择",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        modifier = Modifier.clickable {
+                            importLauncher.launch(
+                                arrayOf(
+                                    "application/json", "text/plain",
+                                    "application/octet-stream", "*/*"
+                                )
+                            )
+                        }
+                    )
+                }
             }
+
         }
 
-        // （v0.6：「逾期处理」并入「提醒」，「待办行为」拆进「提醒」与「列表与待办」。）
-        // 「关于」v0.4 起是独立的第四个导航项，设置页不再保留入口 ——
-        // 两个入口指向同一页，只会让"关于到底在哪"变成一个问题。
+        // ★ §94 二级页：只显示当前进入的那一节
+        if (openSection == SettingsSection.HOMEWORK) {
+            // ═══ 8. 作业自动导入（实验分支，默认关闭；见 DESIGN.md 本版小节）═══
+            // 放在「数据」之后、「测试」之前：它是低频的账号类设置，
+            // 不该挤进每天都要看的提醒/外观，但也不该埋在排障项后面。
+            item { SectionHeader("作业自动导入") }
+            item { HomeworkSyncSection(context) }
+
+        }
+
+        // ★ §94 二级页：只显示当前进入的那一节
+        if (openSection == SettingsSection.TEST) {
+            // ═══ 9. 测试（全页最后）═══
+            item { SectionHeader("测试") }
+            item {
+                SettingsCard {
+                    ListItem(
+                        headlineContent = { Text("发送测试通知") },
+                        // 文案统一成「动作 + 验证什么」：之前"弹一条带「完成」按钮的通知，验证权限、
+                        // 渠道与动作"偏术语，普通用户读不出"我现在该看什么"。
+                        supportingContent = { Text("立刻弹一条，验证通知和按钮") },
+                        trailingContent = {
+                            Text(
+                                "发送",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        modifier = Modifier.clickable(onClick = onTestNotification)
+                    )
+                    ItemDivider()
+                    ListItem(
+                        headlineContent = { Text("新建测试待办") },
+                        supportingContent = { Text("建一条一分钟后到期的待办") },
+                        trailingContent = {
+                            Text(
+                                "创建",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        modifier = Modifier.clickable(onClick = onTestTodo)
+                    )
+                }
+            }
+
+            // （v0.6：「逾期处理」并入「提醒」，「待办行为」拆进「提醒」与「列表与待办」。）
+            // 「关于」v0.4 起是独立的第四个导航项，设置页不再保留入口 ——
+            // 两个入口指向同一页，只会让"关于到底在哪"变成一个问题。
+        }
+
         item { Spacer(Modifier.height(24.dp)) }
     }
 
@@ -2451,7 +2600,6 @@ private fun HomeworkSyncSection(context: android.content.Context) {
     var enabled by remember { mutableStateOf(SyncSettings.enabled(context)) }
     var platform by remember { mutableStateOf(SyncSettings.platform(context)) }
     var trigger by remember { mutableStateOf(SyncSettings.triggerMode(context)) }
-    var hostDraft by remember { mutableStateOf(SyncSettings.customHost(context)) }
     var showLogin by remember { mutableStateOf(false) }
     // §70.9：登录态以「用户点过我已完成登录」为准，自动检测只作补充。
     var loggedIn by remember { mutableStateOf(SyncSettings.userConfirmedLogin(context)) }
@@ -2465,7 +2613,7 @@ private fun HomeworkSyncSection(context: android.content.Context) {
     val importScope = rememberCoroutineScope()
 
     // 进入本节 / 换平台时刷一次会话状态。只读 Cookie 名字，永远不取值。
-    LaunchedEffect(enabled, platform, hostDraft) {
+    LaunchedEffect(enabled, platform) {
         loggedIn = if (enabled) {
             SyncSettings.userConfirmedLogin(context) ||
                 SyncCredentialStore.loggedIn(platform, SyncSettings.host(context, platform))
@@ -2502,29 +2650,9 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                         platform = next
                         SyncSettings.setPlatform(context, next)
                         // 换平台就把学校域名留空，别把上一家的子域带到这一家。
-                        hostDraft = ""
-                        SyncSettings.setCustomHost(context, "")
                         diagnostic = null
                     }
                 )
-                // 课堂派是统一官网，用不上；只在雨课堂显示（§70.7）。
-                if (platform == SyncPlatform.YUKETANG) {
-                    ItemDivider()
-                    OutlinedTextField(
-                        value = hostDraft,
-                        onValueChange = {
-                            hostDraft = it
-                            SyncSettings.setCustomHost(context, it)
-                        },
-                        label = { Text("学校网址（可留空）") },
-                        placeholder = { Text("nk.yuketang.cn") },
-                        supportingText = { Text("决定登录页与凭证读取域名") },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                    )
-                }
                 ItemDivider()
                 SettingsDropdown(
                     label = "同步时机",
@@ -2599,20 +2727,6 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                             importPreview = merged
                         }
                     }
-                )
-                ItemDivider()
-                ListItem(
-                    headlineContent = { Text("手动抓取当前平台") },
-                    supportingContent = { Text("进登录页后可重新抓一次（一般用上面的按钮）") },
-                    trailingContent = {
-                        Text(
-                            "打开",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    modifier = Modifier.clickable { showLogin = true }
                 )
                 ItemDivider()
                 ListItem(

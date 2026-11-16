@@ -17,7 +17,6 @@ object SyncSettings {
     private const val PREF_NAME = "oneline_homework_sync"
     private const val KEY_ENABLED = "enabled"
     private const val KEY_PLATFORM = "platform_id"
-    private const val KEY_CUSTOM_HOST = "custom_host"
     private const val KEY_TRIGGER = "trigger_mode"
     private const val KEY_LAST_LOGIN_AT = "last_login_at"
     private const val KEY_LAST_SYNC_AT = "last_sync_at"
@@ -40,20 +39,16 @@ object SyncSettings {
     }
 
     /**
-     * 用户填的学校域名（雨课堂各校独立子域，如 `gsscut.yuketang.cn`）。
-     * 空串 = 用平台默认站点。写入前统一走 [SyncRules.normalizeHost]。
+     * 平台站点。
+     *
+     * ★ §92：用户决定**去掉「学校网址」自定义项** —— 各校虽然子域不同，
+     *   但走平台默认站点就能正常登录与抓取（实测中山大学账号在
+     *   `www.yuketang.cn` 下工作正常，`uv_id` 由服务端按 Cookie 识别）。
+     *   少一个输入项，设置页也少一处歧义。
+     *
+     * 保留函数签名（不再接受自定义 host），调用方无需改动。
      */
-    fun customHost(context: Context): String =
-        prefs(context).getString(KEY_CUSTOM_HOST, "").orEmpty()
-
-    fun setCustomHost(context: Context, raw: String) {
-        val host = SyncRules.normalizeHost(raw, "")
-        prefs(context).edit().putString(KEY_CUSTOM_HOST, if (host == "") "" else host).apply()
-    }
-
-    /** 不设默认参数：默认表达式里写 `platform(context)` 会被同名形参遮蔽，编译不过。 */
-    fun host(context: Context, platform: SyncPlatform): String =
-        SyncRules.normalizeHost(customHost(context), platform.defaultHost)
+    fun host(context: Context, platform: SyncPlatform): String = platform.defaultHost
 
     fun triggerMode(context: Context): Int {
         val v = prefs(context).getInt(KEY_TRIGGER, SyncTrigger.ON_OPEN_AND_MANUAL)
