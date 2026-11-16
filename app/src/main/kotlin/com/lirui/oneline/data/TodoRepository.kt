@@ -25,6 +25,15 @@ class TodoRepository(private val context: Context) {
     val archived: Flow<List<Todo>> = dao.observeArchived()
 
     /**
+     * 某个平台已经导入过的 externalId 集合。
+     *
+     * ★ §96 用途：自动抓取要在导入**之前**记下「库里已有哪些」，
+     *   导入后才能准确判断哪几条是这次新增的（用于发「有新作业」通知）。
+     */
+    suspend fun knownExternalIds(source: String): Set<String> =
+        dao.externalIdsOf(source).toSet()
+
+    /**
      * ★ §85 作业自动导入：把平台作业写进待办。
      *
      * 与 [addFromParsed] 分开，**不动**那条被多处调用的老路径。

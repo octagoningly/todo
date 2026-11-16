@@ -193,10 +193,14 @@ object SyncEngine {
      */
     suspend fun autoSyncAndImport(
         context: Context,
-        nowMillis: Long = System.currentTimeMillis()
-    ): String? {
+        nowMillis: Long = System.currentTimeMillis(),
+        /** true = 冷启动/回前台触发；false = 周期 Worker 后台触发。 */
+        fromForeground: Boolean = true
+    ): List<String> {
         // 门槛先过，避免无意义的网络请求。
-        if (!SyncSettings.shouldAutoSync(context, nowMillis)) return null
+        if (!SyncSettings.shouldAutoSync(
+            context, nowMillis, fromForeground = fromForeground
+        )) return emptyList()
 
         val checks = SyncPlatform.values().map { p ->
             val h = SyncSettings.host(context, p)
@@ -211,7 +215,7 @@ object SyncEngine {
         }
         if (checks.none { it.loggedIn }) {
             Log.d(TAG, "autoSync skipped: no platform logged in")
-            return null
+            return emptyList()
         }
         Log.d(TAG, "autoSync start")
         val results = collectAllLoggedIn(checks, nowMillis)
@@ -219,12 +223,26 @@ object SyncEngine {
         SyncSettings.setLastAutoSyncAt(context, nowMillis)
         if (merged.isEmpty()) {
             Log.d(TAG, "autoSync: nothing to import")
-            return null
+            return emptyList()
+        }
+        // ★ §96：导入前先记下「库里已有哪些 externalId」，
+        //   导入后就能准确知道哪几条是**这次新增**的（要发通知告诉用户）。
+        //   直接看 importHomework 的返回值不够——它只给数量，给不出标题。
+        val repo = TodoRepositoryHolder.repo(context)
+        val before = merged.map { line ->
+            val known = runCatching {
+                repo.knownExternalIds(line.item.platform.id)
+            }.getOrDefault(emptySet())
+            line to (line.item.externalId in known)
         }
         val outcome = importConfirmed(context, merged)
-        Log.d(TAG, "autoSync done: ${outcome.summary()}")
-        // 只有真的新增了才返回摘要 —— 没有新增就不打扰用户。
-        return if (outcome.added > 0) outcome.summary() else null
+        if (outcome.added == 0) {
+            Log.d(TAG, "autoSync: nothing new (skipped=${outcome.skipped})")
+            return emptyList()
+        }
+        val fresh = before.filter { !it.second }.map { it.first.todoTitle }
+        Log.d(TAG, "autoSync done: added=${outcome.added} fresh=$fresh")
+        return fresh
     }
 
     /** 登录探针：只回答「凭证拿到没有」，不抓作业。 */

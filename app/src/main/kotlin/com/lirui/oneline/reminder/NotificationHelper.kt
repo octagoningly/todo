@@ -21,6 +21,13 @@ object NotificationHelper {
 
     const val CHANNEL_REMINDER = "reminders"
 
+    /** ★ §96 新作业通知：固定 id，每次抓取只更新这一条，不会刷屏。 */
+    private const val NOTIFICATION_ID_NEW_HOMEWORK = 900_001
+
+    /** 用户指定的文案，别改。 */
+    private const val NEW_HOMEWORK_TITLE = "有新作业"
+    private const val NEW_HOMEWORK_TEXT = "老师发布了新的作业，已将作业放进待办！"
+
     /**
      * Fixed id for the "发送测试通知" button — it isn't tied to any todo.
      * Real reminders use [reminderId] so several can coexist.
@@ -210,6 +217,49 @@ object NotificationHelper {
             // permission revoked mid-flight; ignore
         }
     }
+
+    /**
+     * ★ §96 自动抓取到新作业后的通知。
+     *
+     * 用户要求的文案：「老师发布了新的作业，已将作业放进待办！」
+     *
+     * 设计取舍：
+     * - **独立通知 id**（[NOTIFICATION_ID_NEW_HOMEWORK]）：不能被上一条覆盖掉，
+     *   也不能用多条把通知栏刷屏 —— 每次抓取只发**一条**汇总，
+     *   正文列出新增的几条（作业通常一批一起来）。
+     * - **autoCancel**：点开就进 App，通知自然消失。
+     * - 走提醒同一个 channel（用户已经为它授权过，不必再要一次权限）。
+     */
+    fun postNewHomework(context: Context, titles: List<String>) {
+        if (!canPostNotifications(context)) return
+        if (titles.isEmpty()) return
+        val body = if (titles.size == 1) {
+            titles.first()
+        } else {
+            // 多条时列前 3 条 + 计数，避免折叠态被截断得莫名其妙。
+            titles.take(3).joinToString("\n") +
+                if (titles.size > 3) "\n…共 ${titles.size} 条" else ""
+        }
+        val builder = NotificationCompat.Builder(context, CHANNEL_REMINDER)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(NEW_HOMEWORK_TITLE)
+            .setContentText(NEW_HOMEWORK_TEXT)
+            .setStyle(
+                NotificationCompat.BigTextStyle()
+                    .bigText("$NEW_HOMEWORK_TEXT\n$body")
+            )
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setContentIntent(openAppIntent(context, 0L, false))
+            .setAutoCancel(true)
+        try {
+            NotificationManagerCompat.from(context)
+                .notify(NOTIFICATION_ID_NEW_HOMEWORK, builder.build())
+        } catch (_: SecurityException) {
+            // 权限中途被撤销，静默放弃
+        }
+    }
+
 
     /**
      * 通知标题的排布（v0.4 起）：

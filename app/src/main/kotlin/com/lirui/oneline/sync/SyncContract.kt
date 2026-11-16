@@ -107,17 +107,27 @@ data class CookieSnapshot(
     val capturedAtMillis: Long
 )
 
-/** 同步触发方式。默认「打开 App 时 + 手动」，不启用纯后台定时。 */
+/** 同步触发方式。默认「自动（打开 + 后台）」，不启用纯后台定时。 */
 object SyncTrigger {
     const val ON_OPEN_AND_MANUAL = 0
     const val MANUAL_ONLY = 1
     const val DAILY_REMINDER = 2
 
+    /**
+     * ★ §96 选项文案改了。
+     *
+     * 用户指出：「如果 app 一直运行，岂不是不能自动抓取了，因为我看只有打开和手动两种」。
+     *
+     * 这确实是之前的问题 —— 旧选项说「打开 App 时 + 手动」，而实现只在
+     * `LaunchedEffect(Unit)` 里跑一次，App 一直开着就再也不抓。
+     *
+     * 现在三条触发路径都接上了（冷启动 / 回前台 / 周期 Worker），
+     * 选项名如实反映能力，别让用户以为只能手动。
+     */
     val OPTIONS = listOf(
-        ON_OPEN_AND_MANUAL to "打开 App 时 + 手动",
+        ON_OPEN_AND_MANUAL to "自动（打开时 + 回到前台 + 后台每 6 小时）",
         MANUAL_ONLY to "仅手动",
-        // 只是「到点提醒你去同步」，不做无头 WebView 后台取数：
-        // 页面内注入 fetch 需要前台会话，纯后台拿不到页面上下文。
-        DAILY_REMINDER to "每天提醒我去同步"
+        // 与上面那条的区别：只在后台静默跑，不做"回前台"补抓。
+        DAILY_REMINDER to "只后台抓（每 6 小时）"
     )
 }

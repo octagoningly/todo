@@ -111,7 +111,7 @@ object SyncSettings {
     }
 
     /**
-     * 该不该在这次冷启动自动抓一次。
+     * 该不该自动抓一次。
      *
      * 四条门槛，缺一不可：
      * 1. 总闸开着（用户没关）；
@@ -119,14 +119,21 @@ object SyncSettings {
      * 3. 距上次自动抓取已超过 [minIntervalMillis]（默认 6 小时）——
      *    避免用户频繁切 App 时反复发请求打平台；
      * 4. 至少有一个平台已登录（由调用方判断，这里不管）。
+     *
+     * ★ §96 补充：选了 `DAILY_REMINDER`（只后台抓）时**跳过前台触发**，
+     *   这样用户选「只后台」就真的不会在打开 App 时抓。
      */
     fun shouldAutoSync(
         context: Context,
         nowMillis: Long,
-        minIntervalMillis: Long = AUTO_SYNC_MIN_INTERVAL_MS
+        minIntervalMillis: Long = AUTO_SYNC_MIN_INTERVAL_MS,
+        fromForeground: Boolean = true
     ): Boolean {
         if (!enabled(context)) return false
-        if (triggerMode(context) == SyncTrigger.MANUAL_ONLY) return false
+        val mode = triggerMode(context)
+        if (mode == SyncTrigger.MANUAL_ONLY) return false
+        // 「只后台抓」不允许前台（冷启动 / 回前台）触发。
+        if (mode == SyncTrigger.DAILY_REMINDER && fromForeground) return false
         val last = lastAutoSyncAt(context)
         if (last <= 0L) return true
         return nowMillis - last >= minIntervalMillis
