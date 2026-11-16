@@ -96,6 +96,81 @@ object NativeProbeRunner {
         SyncPlatform.YUKETANG -> probeYuketang(host, cookies)
     }
 
+    /**
+     * ★ §86 探针结果 → 可导入的作业列表。
+     *
+     * 两个平台的结构不同，这里做归一化，交给 [ImportRules] 统一过滤：
+     * - **课堂派**：`results[]` 里 `name` 为 `homework` / `exam` 的项，
+     *   `data.list[]` 每条有 `id` / `title` / `endtime`（Unix **秒**）；
+     *   学期在 `候选人` 的课程名里不带，靠调用方按课程池匹配。
+     * - **雨课堂**：`nodes[]` 里 `source=logs`/`c27` 且 `leaf_type=5` 的项，
+     *   每条有 `id` / `name` / `score_deadline`（**毫秒**）/ `kind` / `course`。
+     */
+    fun extractImportItems(
+        platform: SyncPlatform,
+        root: JSONObject
+    ): List<ImportRules.ImportItem> {
+        val out = mutableListOf<ImportRules.ImportItem>()
+        when (platform) {
+            SyncPlatform.KETANGPAI -> {
+                val results = root.optJSONArray("results") ?: return out
+                for (i in 0 until results.length()) {
+                    val r = results.optJSONObject(i) ?: continue
+                    val nm = r.optString("name")
+                    if (nm != "homework" && nm != "exam") continue
+                    val courseName = r.optString("course")
+                    val data = runCatching {
+                        JSONObject(r.optString("sample")).optJSONObject("data")
+                    }.getOrNull() ?: continue
+                    val list = data.optJSONArray("list") ?: continue
+                    for (j in 0 until list.length()) {
+                        val o = list.optJSONObject(j) ?: continue
+                        val id = o.optString("id").ifBlank { continue }
+                        // ★ 课堂派的 endtime 是 **Unix 秒**，这里转毫秒。
+                        val endSec = o.optString("endtime").toLongOrNull()
+                            ?: o.optLong("endtime", 0L)
+                        if (endSec <= 0L) continue
+                        out += ImportRules.ImportItem(
+                            platform = platform,
+                            externalId = id,
+                            courseName = courseName,
+                            title = o.optString("title"),
+                            deadlineMillis = endSec * 1000L,
+                            kind = if (nm == "exam") KIND_EXAM else KIND_HOMEWORK,
+                            submitted = false
+                        )
+                    }
+                }
+            }
+            SyncPlatform.YUKETANG -> {
+                val nodes = root.optJSONArray("nodes") ?: return out
+                for (i in 0 until nodes.length()) {
+                    val n = nodes.optJSONObject(i) ?: continue
+                    // 只取作业类（5/6）；8 是课件。
+                    if (!isHomeworkOrExam(n.optString("leaf_type"))) continue
+                    val id = n.optLong("id", 0L).takeIf { it > 0L }?.toString() ?: continue
+                    // ★ 雨课堂在 logs 里给的是毫秒（score_deadline 已归一），
+                    //   若是 c27 给的 score_deadline 同样是毫秒。
+                    val dl = n.optLong("score_deadline", 0L).takeIf { it > 0L }
+                        ?: n.optLong("end_time", 0L).takeIf { it > 0L }
+                        ?: continue
+                    val title = n.optString("name")
+                    out += ImportRules.ImportItem(
+                        platform = platform,
+                        externalId = id,
+                        courseName = n.optString("course"),
+                        title = title,
+                        deadlineMillis = dl,
+                        kind = n.optString("kind").ifBlank { classifyYuketangKind(title) },
+                        // status=3 表示已完成（真机观测值）。
+                        submitted = n.optInt("status", -1) == 3
+                    )
+                }
+            }
+        }
+        return out
+    }
+
     // ---------------------------------------------------------------------
     // 课堂派
     // ---------------------------------------------------------------------

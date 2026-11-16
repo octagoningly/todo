@@ -2456,6 +2456,11 @@ private fun HomeworkSyncSection(context: android.content.Context) {
     // §70.9：登录态以「用户点过我已完成登录」为准，自动检测只作补充。
     var loggedIn by remember { mutableStateOf(SyncSettings.userConfirmedLogin(context)) }
     var diagnostic by remember { mutableStateOf<String?>(null) }
+    // ★ §86：预览数据。null = 没有待确认的导入。
+    var importPreview by remember {
+        mutableStateOf<List<com.lirui.oneline.sync.ImportRules.PreviewLine>?>(null)
+    }
+    val importScope = rememberCoroutineScope()
 
     // 进入本节 / 换平台时刷一次会话状态。只读 Cookie 名字，永远不取值。
     LaunchedEffect(enabled, platform, hostDraft) {
@@ -2625,8 +2630,44 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                 loggedIn = true
                 diagnostic = briefDiagnosis(true, probe.cookieNames)
             },
-            // §70.11：抓取探针结果只回一行摘要，原始响应由 ProbeRunner 落本机文件。
-            onProbeResult = { result -> diagnostic = result }
+            // §86：探针跑完后**不再只回一行摘要**，而是直接去拉可导入的作业并弹预览。
+            //   用户在预览里确认才写库 —— 预览阶段全程只读。
+            onProbeResult = { result ->
+                diagnostic = result
+                importScope.launch {
+                    val cookies = SyncCredentialStore.snapshot(
+                        platform, SyncSettings.host(context, platform)
+                    ).cookies
+                    val preview = withContext(Dispatchers.IO) {
+                        SyncEngine.collectPreview(
+                            platform = platform,
+                            host = SyncSettings.host(context, platform),
+                            cookies = cookies,
+                            semesterTag = null
+                        )
+                    }
+                    importPreview = preview
+                }
+            }
+        )
+    }
+
+    // ★ §86：预览确认对话框。只有点「确认导入」才会写数据库。
+    importPreview?.let { lines ->
+        HomeworkImportPreviewDialog(
+            lines = lines,
+            onConfirm = {
+                val toImport = lines
+                importPreview = null
+                importScope.launch {
+                    val outcome = SyncEngine.importConfirmed(context, toImport)
+                    diagnostic = outcome.summary()
+                }
+            },
+            onDismiss = {
+                importPreview = null
+                diagnostic = "已取消导入，待办未改动"
+            }
         )
     }
 }
