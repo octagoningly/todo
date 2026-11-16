@@ -282,6 +282,14 @@ object NativeProbeRunner {
         return fmt.format(java.util.Date())
     }
 
+    /** 毫秒时间戳 → `MM-dd HH:mm`（Asia/Shanghai），摘要里显示截止时间用。 */
+    fun fmtMs(millis: Long): String {
+        if (millis <= 0L) return "无截止"
+        val fmt = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US)
+        fmt.timeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
+        return fmt.format(java.util.Date(millis))
+    }
+
     /**
      * 课堂派 `semesterCourseList` 响应解析（★ §79 新增）。
      *
@@ -364,10 +372,110 @@ object NativeProbeRunner {
         parseKetangpaiCourses(json).firstOrNull()?.first
 
     /**
+     * 活动时间轴 `logs/learn` 解析（§83）—— **雨课堂最好用的数据源**。
+     *
+     * ★ 相比 c27 的优势（真机实测）：
+     *   - `activities[]` 直接带 **`deadline`（毫秒）**，不用自己从 score_deadline 推断；
+     *   - 带 **`type`**：`5` = 作业/测验，`9` = 公告，`14` = 课件/签到；
+     *   - 带 `status` / `total_score` / `problem_count`，能判断「已交 / 未交」。
+     *
+     * 实测 121 条 activity：type 5 有 49 条（作业）、14 有 53 条（课件）、
+     * 9 有 19 条（公告）。**作业只看 type=5。**
+     *
+     * 而且它覆盖的课程比 c27 更全（c27 只有 11/50 门有数据，
+     * 因为部分课程不在「在线课件」体系里）。
+     */
+    fun parseLogsActivities(json: String?, courseName: String): List<JSONObject> {
+        if (json.isNullOrBlank()) return emptyList()
+        val root = runCatching { JSONObject(json) }.getOrNull() ?: return emptyList()
+        val acts = root.optJSONObject("data")?.optJSONArray("activities") ?: return emptyList()
+        val out = mutableListOf<JSONObject>()
+        for (i in 0 until acts.length()) {
+            val a = acts.optJSONObject(i) ?: continue
+            val type = a.optInt("type", -1)
+            // 只收作业/测验类；9=公告、14=课件不是待办。
+            if (!isLogsHomeworkType(type)) continue
+            val deadline = a.optLong("deadline", 0L)
+            val title = a.optString("title")
+            out += JSONObject().apply {
+                put("course", courseName)
+                put("name", title)
+                put("leaf_type", "5")               // 与 c27/章节树的作业类型对齐
+                put("id", a.optLong("id", 0L))
+                // ★ logs 的 deadline 是**毫秒**，直接可用。
+                put("score_deadline", deadline)
+                put("end_time", 0L)
+                put("start_time", a.optLong("create_time", 0L))
+                put("status", a.optInt("status", -1))
+                put("total_score", a.optDouble("total_score", 0.0))
+                put("problem_count", a.optInt("problem_count", 0))
+                // ★ §84：雨课堂只有"考试"入口，老师发的作业/小测/考试都是 type=5，
+                //   只能按标题判断到底属于哪一类。
+                put("kind", classifyYuketangKind(title))
+                put("source", "logs")
+            }
+        }
+        return out
+    }
+
+    /** logs 里 `type=5` 是作业/测验；9=公告、14=课件，都不进待办。 */
+    fun isLogsHomeworkType(type: Int): Boolean = type == 5
+
+    /**
+     * ★ §84：雨课堂**只有一个"考试"发布入口**，老师所有的作业、小测、考试
+     * 都以 `type=5` / `leaf_type=5` 的形式发出。所以「类型」不能靠接口字段区分，
+     * **只能按标题命名判断**。
+     *
+     * 真机 49 条 type=5 的标题样本，命名规律很清楚：
+     *
+     * | 模式 | 例子 |
+     * | --- | --- |
+     * | 小测/测验/quiz | `小测1` `小测3` `Quiz 7` `第1、2章小测验` `傅里叶级数随堂小测（1）` |
+     * | 考试/期末/期中 | `期中考试` `期末考试` |
+     * | 作业（含周次/讲次） | `第16周作业` `第九讲作业` `第七讲"傅里叶变换"作业` `Homework_7` |
+     * | 考查/考察 | `劳动教育考查-2025-2026春` `国家安全教育考察-25-26秋` |
+     * | 纯练习/无关键词 | `练习` `积分填空` `第五讲傅里叶级数（1）` |
+     *
+     * ★ 判成「作业」而不是「考试」的边界很重要：待办里显示成「考试」会吓人，
+     *   显示成「作业」更贴切。**默认归为作业**（安全侧），只有明确写了
+     *   「考试 / 期末 / 期中」才标成考试。
+     */
+    fun classifyYuketangKind(title: String?): String {
+        val t = title.orEmpty().lowercase()
+        // ★ 先判「报告 / 练习 / 习题 / 作业」这类**实体作业词**，
+        //   因为它们经常和"期末"同时出现（真机里「电路实习期末报告提交」
+        //   含"期末"，但它是一份报告作业，不是考试）。
+        if (t.contains("报告") || t.contains("作业") ||
+            t.contains("homework") || t.contains("练习") || t.contains("习题")
+        ) {
+            // 例外：「作业考试」这种同时含两词的，仍按考试判（更醒目）。
+            if (t.contains("考试") || t.contains("exam")) return KIND_EXAM
+            return KIND_HOMEWORK
+        }
+        // 1) 明确的考试：期中/期末/考试
+        if (t.contains("考试") || t.contains("期末") || t.contains("期中") ||
+            t.contains("exam") || t.contains("final")
+        ) return KIND_EXAM
+        // 2) 小测 / 测验
+        if (t.contains("小测") || t.contains("测验") || t.contains("quiz") ||
+            t.contains("test")
+        ) return KIND_QUIZ
+        // 3) 考查 / 考察（很多通识课用这个词，实质是期末作业）
+        if (t.contains("考查") || t.contains("考察")) return KIND_ASSESS
+        // 4) 兜底：**默认作业**。宁可显示成"作业"也不要误标"考试"。
+        return KIND_HOMEWORK
+    }
+
+    const val KIND_EXAM = "考试"
+    const val KIND_QUIZ = "小测"
+    const val KIND_ASSESS = "考查"
+    const val KIND_HOMEWORK = "作业"
+
+    /**
      * `c27` 课程进度响应 → 扁平节点（§82 新增）。
      *
      * 这个接口的结构与 mooc 章节树**完全不同**，所以单独解析。已知返回里有
-     * `data` 包裹，内容按"章节 → 小节 → 叶"层级；这里做**结构化遍历**：
+     * `data` 包裹，内容按「章节 → 小节 → 叶」层级；这里做**结构化遍历**：
      * 递归找任何带 `leaf_type`（或 `leafType`）的对象，统一扁平化，
      * 并对 `end_time` / `score_deadline` / `endTime` 等命名做兼容。
      */
@@ -384,8 +492,9 @@ object NativeProbeRunner {
                         val id = o.optLong("id", 0L).takeIf { it > 0L }
                             ?: o.optLong("leaf_id", 0L).takeIf { it > 0L }
                         out += JSONObject().apply {
+                            val nm = o.optString("name").ifBlank { o.optString("title") }
                             put("course", courseName)
-                            put("name", o.optString("name").ifBlank { o.optString("title") })
+                            put("name", nm)
                             put("leaf_type", lt)
                             put("id", id ?: 0L)
                             put("end_time", o.optLong("end_time", 0L).takeIf { it > 0 }
@@ -394,6 +503,8 @@ object NativeProbeRunner {
                                 ?: o.optLong("scoreDeadline", 0L))
                             put("start_time", o.optLong("start_time", 0L).takeIf { it > 0 }
                                 ?: o.optLong("startTime", 0L))
+                            // §84：同样按标题分词，作业/小测/考试靠命名区分。
+                            put("kind", classifyYuketangKind(nm))
                             put("source", "c27")
                         }
                     }
@@ -497,6 +608,7 @@ object NativeProbeRunner {
         //   `/v2/api/web/classrooms/{cid}` 的 `data.course_id` 里。
         var c27Count = 0
         var c27WithLeaf = 0
+        var logsCourses = 0
         courses.forEachIndexed { _, c ->
             val cid = c.first
             // 1) 课程详情：拿 course_id（章节树/进度都要）
@@ -518,35 +630,94 @@ object NativeProbeRunner {
                 if (leafs.isNotEmpty()) c27WithLeaf++
                 for (n in leafs) allNodes.put(n)
             }
-            // 3) 活动时间轴：作业/考试以 activity 形式出现，独立线索。
-            results.put(execute(NativeProbeSpec.yuketangLogsRequest(host, cookies, cid)))
+            // 3) 活动时间轴：★ §83 实测这是雨课堂**最好用**的数据源 ——
+            //    直接带 deadline（毫秒）与 type（5=作业/9=公告/14=课件），
+            //    覆盖面也比 c27 全（c27 只有 11/50 门有数据）。
+            val logs = execute(NativeProbeSpec.yuketangLogsRequest(host, cookies, cid))
+            results.put(logs)
+            val acts = parseLogsActivities(logs.optString("sample"), c.second)
+            if (acts.isNotEmpty()) logsCourses++
+            for (n in acts) allNodes.put(n)
         }
         root.put("c27Probed", c27Count)
         root.put("c27WithLeaf", c27WithLeaf)
+        root.put("logsCourses", logsCourses)
 
         root.put("nodes", allNodes)
         var withDeadline = 0
         var homeworkCount = 0
         var examCount = 0
+        var futureCount = 0
         val leafCounts = LinkedHashMap<String, Int>()
         val homeworkNodes = mutableListOf<JSONObject>()
+        // ★ §83：c27 与 logs 会覆盖同一门课的同一份作业，按 (课程名, 标题) 去重，
+        //   否则同一个「第九讲作业」会被数两次。
+        val seen = HashSet<String>()
+        val deduped = org.json.JSONArray()
+        val nowMs = System.currentTimeMillis()
         for (i in 0 until allNodes.length()) {
             val n = allNodes.getJSONObject(i)
+            val key = n.optString("course") + "|" + n.optString("name")
+            if (!seen.add(key)) continue
+            deduped.put(n)
             val lt = n.optString("leaf_type", "?")
             leafCounts[lt] = (leafCounts[lt] ?: 0) + 1
             // ★ 0 代表「无限制」，必须走 isDeadlineUsable 判定，不能直接 > 0 之外再当时间用。
-            if (isDeadlineUsable(n.optLong("end_time")) ||
-                isDeadlineUsable(n.optLong("score_deadline"))
-            ) withDeadline++
+            val dl = if (isDeadlineUsable(n.optLong("score_deadline"))) {
+                n.optLong("score_deadline")
+            } else if (isDeadlineUsable(n.optLong("end_time"))) {
+                n.optLong("end_time")
+            } else {
+                0L
+            }
+            if (dl > 0L) {
+                withDeadline++
+                if (dl > nowMs) futureCount++
+            }
             if (isHomeworkOrExam(lt)) {
                 homeworkNodes += n
-                if (lt == "6") homeworkCount++ else examCount++
+                // ★ §83：5 就是作业类（真机里全是「第N周作业」「小测」「练习」），
+                //   不再按「6=作业 / 5=考试」拆开报，避免把作业误标成考试。
+                homeworkCount++
             }
         }
+        root.put("nodes", deduped)
         root.put("leafTypeCounts", JSONObject(leafCounts.toMap()))
         root.put("withDeadline", withDeadline)
+        root.put("futureDeadline", futureCount)
         root.put("homeworkCount", homeworkCount)
         root.put("examCount", examCount)
+
+        // ★ §84：按「作业/小测/考试/考查」分类统计，并把**未过期的**单独列出来。
+        //   雨课堂只有一个发布入口，类型只能靠标题判断 —— 分类结果要能直接看到。
+        val kindCounts = LinkedHashMap<String, Int>()
+        val pending = org.json.JSONArray()
+        for (i in 0 until deduped.length()) {
+            val n = deduped.getJSONObject(i)
+            val kind = n.optString("kind").ifBlank { KIND_HOMEWORK }
+            kindCounts[kind] = (kindCounts[kind] ?: 0) + 1
+            val dl = if (isDeadlineUsable(n.optLong("score_deadline"))) {
+                n.optLong("score_deadline")
+            } else if (isDeadlineUsable(n.optLong("end_time"))) {
+                n.optLong("end_time")
+            } else {
+                0L
+            }
+            if (dl > nowMs) {
+                pending.put(
+                    JSONObject().apply {
+                        put("course", n.optString("course"))
+                        put("name", n.optString("name"))
+                        put("kind", kind)
+                        put("deadline", dl)
+                        put("status", n.optInt("status", -1))
+                    }
+                )
+            }
+        }
+        root.put("kindCounts", JSONObject(kindCounts.toMap()))
+        root.put("pendingCount", pending.length())
+        root.put("pending", pending)
 
         // 有作业/考试节点时才去试详情与题目接口，避免白打一串 404。
         // 优先用真正的作业/考试节点；一个都没有就退回第一个有 id 的节点，
@@ -623,8 +794,26 @@ object NativeProbeRunner {
             " / leaf_type $leafCounts"
         // ★ §82：c27 路线单独报，用来区分「课时节点没拿到」与「这课真没作业」。
         lines += "c27：探测 ${root.optInt("c27Probed")} 门 / 拿到节点 ${root.optInt("c27WithLeaf")} 门"
+        lines += "logs：${root.optInt("logsCourses")} 门课有活动流"
+        // ★ §84：雨课堂只有"考试"入口，作业/小测/考试按标题分类。
+        val kc = root.optJSONObject("kindCounts")
+        if (kc != null && kc.length() > 0) {
+            val kv = kc.keys().asSequence().joinToString(" / ") { "$it=${kc.optInt(it)}" }
+            lines += "按标题分类：$kv"
+        }
         lines += "作业 ${root.optInt("homeworkCount")} 个 / 考试 ${root.optInt("examCount")} 个" +
-            " / 有绝对截止 $withDeadline 个"
+            " / 有绝对截止 ${root.optInt("withDeadline")} 个" +
+            " / **未过期 ${root.optInt("futureDeadline")} 个**"
+        // 未过期的逐条列出 —— 这才是真正会写进待办的东西。
+        val pend = root.optJSONArray("pending")
+        if (pend != null && pend.length() > 0) {
+            lines += "待办候选（未过期 ${pend.length()} 条）："
+            for (i in 0 until minOf(pend.length(), 10)) {
+                val p = pend.optJSONObject(i) ?: continue
+                lines += "  · [${p.optString("kind")}] ${p.optString("course")} / " +
+                    "${p.optString("name")} @${fmtMs(p.optLong("deadline"))}"
+            }
+        }
         return lines.joinToString("\n")
     }
 
@@ -787,8 +976,27 @@ object NativeProbeRunner {
      * `leaf_type` 枚举有两份独立源码互证：
      * 0=视频 3=公告/推荐 4=讨论 5=考试 6=作业（测验/练习）。
      */
+    /**
+     * `leaf_type` 是否属于「要转成待办」的类型。
+     *
+     * ★ §83 实测订正：**`leaf_type=5` 才是作业/测验**，不是考试。
+     *   真机数据里 49 个 `leaf_type=5` 节点的名字全是
+     *   「第16周作业」「第15周作业」「小测3」「练习」——
+     *   而 53 个 `leaf_type=8` 是「Chapter 8 Counters」这类**课件/章节**。
+     *
+     *   之前把 5 当考试、6 当作业，于是摘要报
+     *   `作业 0 个 / 考试 49 个` —— 数字对、标签错，
+     *   会让人误以为「雨课堂没有作业」。这类错标比不显示更危险。
+     *
+     *   `6` 也一并收下：它在本账号没出现，但社区资料把它归为作业/测验，
+     *   留着不影响（有就导，没有就算了）。
+     */
     fun isHomeworkOrExam(leafType: String?): Boolean =
-        leafType == "6" || leafType == "5"
+        leafType == "5" || leafType == "6"
+
+    /** 是否是「作业类」节点（用于摘要分组；5/6 都算作业，不再区分考试）。 */
+    fun isHomeworkLike(leafType: String?): Boolean =
+        leafType == "5" || leafType == "6"
 
     /**
      * `score_deadline` / `end_time` 是否可用作截止时间。
