@@ -129,7 +129,17 @@ object NativeProbeSpec {
         "https://openapiv53.ketangpai.com"
     )
 
-    private const val SEMESTER_LIST_BODY = """{"isstudy":"0","search":""}"""
+    /**
+     * ★ §78：`isstudy` 是「我教的/我协助的/我学的」页签映射，**不是布尔量**。
+     *
+     * 学生对应「我学的」页签 → 发给后端必须是 `"1"`。
+     * 之前全链路都写 `"0"`（那是**教师**页签「我教的」），
+     * 于是 `topcourses` 还能容错回点东西、但 `semester[]` 永远是空数组、
+     * 按学期取明细也自然拿不到本学期的课。
+     */
+    private const val ISSTUDY_STUDENT = "1"
+    private const val SEMESTER_LIST_BODY =
+        """{"isstudy":"$ISSTUDY_STUDENT","search":""}"""
     private const val COURSE_LIST_BODY =
         """{"isstudy":1,"search":"","semester":"","term":""}"""
 
@@ -141,8 +151,23 @@ object NativeProbeSpec {
      *   「复变函数」「数学物理方法」一门都没出现。`data.semester` 还回了空数组，
      *   本应是可选学期列表。
      *
-     * 所以这里把「能想到的学期筛选写法」全试一遍：
-     * 显式传学期、切 `isstudy`、换 `semesterCourseList` 入口、以及不带筛选的完整列表。
+     * ★§78 调研从课堂派 H5 线上 bundle（`w.ketangpai.com/js/app.*.js`）还原出真因：
+     *
+     * **`isstudy` 不是布尔开关，是「我教的 / 我协助的 / 我学的」三个页签的映射值。**
+     * 前端原文：
+     * ```js
+     * isstudy: "1"===this.isstudyTbs ? "0" : "2"===this.isstudyTbs ? "2" : "1"
+     * ```
+     * 于是：学生（`usertype="0"`，页签「我学的」）发给后端的 **`isstudy="1"`**；
+     * 而 `"0"` 是**教师**页签「我教的」。我们一直传 `"0"`，
+     * 难怪 `data.semester` 是空数组、`number=0` —— 学生没有「我教的课程」，学期分组自然为空。
+     *
+     * 第二个真因：**`topcourses` 只是「置顶课程」区**（对应 `isTop:1`），
+     * 全部课程在 `semester[]` 里按学期分组，前端再逐个学期调 `semesterCourseList` 取明细。
+     * 我们只读了 `topcourses`，所以只有 5 门 —— 本学期的课可能压根不在置顶区。
+     *
+     * 还有一处命名空间细节：小写 `/courseApi/semesterList` 是 H5 首页入口，
+     * 大写 `/CourseApi/semesterCourseList` 是按学期取明细，两者不是同一个接口。
      */
     fun ketangpaiSemesterRequests(
         credential: Credential,
@@ -154,54 +179,69 @@ object NativeProbeSpec {
         headers += "Content-Type" to JSON
         headers += "token" to credential.token
 
-        // 当前学年（2026-2027 第一学期）的两种常见写法。
-        val semesters = listOf("2026-2027" to "1", "2026-2027" to "0")
+        // axios 拦截器会自动注入的毫秒时间戳；开源实现里也要求带上。
+        val reqTs = System.currentTimeMillis()
         val out = mutableListOf<ProbeRequest>()
 
-        // A：显式带学期字段打 semesterList。
-        semesters.forEachIndexed { i, (sem, term) ->
-            out += ProbeRequest(
-                name = "semesterList-explicit-$i",
-                method = "POST",
-                url = "$host/CourseApi/semesterList",
-                headers = headers,
-                body = "{\"isstudy\":\"0\",\"search\":\"\"," +
-                    "\"semester\":\"$sem\",\"term\":\"$term\"}",
-                tokenMode = "header"
-            )
-        }
-        // B：`isstudy=1` —— 现在用的是 0，试另一档。
+        // ★ R1 最高优先：学生页签的 semesterList（isstudy=1）。
+        //   顺便带上 reqtimestamp —— 平台自己的拦截器每次都加，可能参与校验。
         out += ProbeRequest(
             name = "semesterList-isstudy1",
             method = "POST",
             url = "$host/CourseApi/semesterList",
             headers = headers,
-            body = "{\"isstudy\":\"1\",\"search\":\"\"}",
+            body = "{\"isstudy\":\"1\",\"search\":\"\",\"reqtimestamp\":$reqTs}",
             tokenMode = "header"
         )
-        // C：拿学期下拉列表的候选入口（data.semester 现在是空数组）。
-        listOf("semesterAll", "getSemester", "semester").forEach { ep ->
+        // R2 助教页签；R3 教师页签（对照，就是之前一直用的那个）。
+        listOf("2" to "assist", "0" to "teacher").forEach { (v, label) ->
             out += ProbeRequest(
-                name = "sem-$ep",
+                name = "semesterList-$label",
                 method = "POST",
-                url = "$host/CourseApi/$ep",
+                url = "$host/CourseApi/semesterList",
                 headers = headers,
-                body = "{}",
+                body = "{\"isstudy\":\"$v\",\"search\":\"\",\"reqtimestamp\":$reqTs}",
                 tokenMode = "header"
             )
         }
-        // D：`semesterCourseList` 显式指定学期。
-        semesters.forEachIndexed { i, (sem, term) ->
+        // R10 学生主路径精简列表：独立于 semesterList，值得单独打。
+        out += ProbeRequest(
+            name = "simpleLists",
+            method = "POST",
+            url = "$host/courseApi/simpleLists",
+            headers = headers,
+            body = "{\"reqtimestamp\":$reqTs}",
+            tokenMode = "header"
+        )
+        // ★ R4/R6：按学期取明细。`semester=""`+`term=""` = 全部学期，
+        //   所以先打「全部学期」拿到账号下真实存在的学期集合，再打本学期。
+        val queries = listOf(
+            "all" to ("" to ""),
+            "2026-2027-1" to ("2026-2027" to "1"),
+            "2026-2027-2" to ("2026-2027" to "2"),
+            "2025-2026-2" to ("2025-2026" to "2")
+        )
+        queries.forEach { (label, semTerm) ->
+            val (sem, term) = semTerm
             out += ProbeRequest(
-                name = "semesterCourseList-$i",
+                name = "semesterCourseList-$label",
                 method = "POST",
                 url = "$host/CourseApi/semesterCourseList",
                 headers = headers,
-                body = "{\"isstudy\":1,\"search\":\"\"," +
-                    "\"semester\":\"$sem\",\"term\":\"$term\"}",
+                body = "{\"isstudy\":\"1\",\"search\":\"\"," +
+                    "\"semester\":\"$sem\",\"term\":\"$term\",\"reqtimestamp\":$reqTs}",
                 tokenMode = "header"
             )
         }
+        // 归档接口：若本学期课程被误归档，会出现在这里。
+        out += ProbeRequest(
+            name = "archive-lists",
+            method = "POST",
+            url = "$host/ArchiveApi/lists",
+            headers = headers,
+            body = "{\"reqtimestamp\":$reqTs}",
+            tokenMode = "header"
+        )
         return out
     }
 
@@ -244,7 +284,7 @@ object NativeProbeSpec {
             method = "POST",
             url = path,
             headers = baseHeaders + ("Content-Type" to TEXT),
-            body = """{"token":"${credential.token}","isstudy":"0","search":""}""",
+            body = """{"token":"${credential.token}","isstudy":"$ISSTUDY_STUDENT","search":""}""",
             tokenMode = "body"
         )
         // D：token 进 URL query。

@@ -128,17 +128,22 @@ object NativeProbeRunner {
         courses.forEach { namesArr.put("${it.second} / ${it.third}") }
         root.put("courses", namesArr)
 
-        // ★ §77：`semesterList` 只回上学期（2025-2026 term=2）的课，
-        //   本学期的「复变函数」「数学物理方法」一门都没有。这里把学期筛选的几种写法
-        //   全试一遍，看哪条能拿到本学期。
+        // ★ §77/§78：`isstudy` 用错了页签，加上 `topcourses` 只是置顶区，
+        //   所以之前只看到 5 门上学期课。这里把学期探测全打一遍，
+        //   用来确认「本学期到底有没有课」以及哪条请求能拿到。
         val semProbe = JSONObject()
+        // 学期分组是判断「本学期存不存在」的关键：data.semester[] 之前是空数组。
+        var semesterGroups: List<Triple<String, String, String>> = emptyList()
         for (req in NativeProbeSpec.ketangpaiSemesterRequests(credential, cookieHeader)) {
             val res = execute(req)
             val text = res.optString("sample")
             val list = parseKetangpaiCoursesWithSemester(text)
             semProbe.put(req.name, "${res.optInt("status")}/${list.size}门")
             results.put(res)
-            // 一旦某一组出现了新的课程（与 5 门基线不同），记下来。
+            if (semesterGroups.isEmpty()) {
+                val groups = parseKetangpaiSemesterGroups(text)
+                if (groups.isNotEmpty()) semesterGroups = groups
+            }
             if (list.isNotEmpty()) {
                 val arr = org.json.JSONArray()
                 list.take(12).forEach { arr.put("${it.second}(${it.third})") }
@@ -146,9 +151,13 @@ object NativeProbeRunner {
             }
         }
         root.put("semesterProbe", semProbe)
+        val grpArr = org.json.JSONArray()
+        semesterGroups.forEach { grpArr.put("${it.first}/${it.second} ${it.third}".trim()) }
+        root.put("semesterGroups", grpArr)
+        root.put("semesterGroupCount", semesterGroups.size)
 
         // ★ 作业/考试：对**每门课**都取一次，避免「第一门没作业就下结论」。
-        courses.take(6).forEach { c ->
+        courses.forEach { c ->
             for (req in NativeProbeSpec.ketangpaiContentRequests(
                 credential, cookieHeader, c.first
             )) {
@@ -169,7 +178,16 @@ object NativeProbeRunner {
         lines += "课程：${root.optInt("courseCount")} 门"
         val cs = root.optJSONArray("courses")
         if (cs != null) {
-            for (i in 0 until minOf(cs.length(), 5)) lines += "  · ${cs.optString(i)}"
+            for (i in 0 until minOf(cs.length(), 8)) lines += "  · ${cs.optString(i)}"
+        }
+        // ★ §78：学期分组是判断「本学期有没有课」的钥匙。
+        //   之前 data.semester 是空数组（因为 isstudy 用成了教师页签）。
+        val grp = root.optJSONArray("semesterGroups")
+        if (grp != null && grp.length() > 0) {
+            lines += "学期分组（${grp.length()}）：" +
+                (0 until minOf(grp.length(), 6)).joinToString(" / ") { grp.optString(it) }
+        } else {
+            lines += "学期分组：无（isstudy 页签或账号无本学期课）"
         }
         val parts = (0 until results.length()).map { i ->
             val r = results.getJSONObject(i)
@@ -182,23 +200,64 @@ object NativeProbeRunner {
     }
 
     /**
-     * 课堂派课程列表：`data.topcourses[]` 里取第一条的 `id`。
+     * 课堂派课程列表：★ §78 要读**两个区**，缺一不可。
      *
-     * ★ §75 实测订正：`data` 是**对象**不是数组，课程挂在 `data.topcourses` 下；
-     *   而且课程 `id` 是一串**Base64 风格的字符串**（`MDAwMDAwMDAwMLOcuZmG37NshqVyoQ`），
-     *   **不是数字** —— 上一版按「data 数组 + 数字 id」解析，于是 courseId 永远是空。
-     *   这里改用 org.json 正规解析，并把字符串 id 原样保留。
+     * - `data.topcourses[]` = **置顶课程**（对应 `isTop:1`），只是首页最上面那一排，
+     *   不是全部课程 —— 我们之前只读这里，所以永远只有 5 门。
+     * - `data.semester[]` = **按学期分组的全部课程**，元素形如
+     *   `{semester, term, termTxt}`，前端再逐个学期调 `semesterCourseList` 取明细。
+     *
+     * 返回 (课程 id, 课程名, 学期标记)。
      */
     fun parseKetangpaiCourses(json: String?): List<Triple<String, String, String>> {
         if (json.isNullOrBlank()) return emptyList()
         val obj = runCatching { JSONObject(json) }.getOrNull() ?: return emptyList()
         val data = obj.optJSONObject("data") ?: return emptyList()
-        val list = data.optJSONArray("topcourses") ?: return emptyList()
+
+        val out = LinkedHashMap<String, Triple<String, String, String>>()
+
+        // 1) 置顶课程
+        data.optJSONArray("topcourses")?.let { list ->
+            for (i in 0 until list.length()) {
+                val c = list.optJSONObject(i) ?: continue
+                val id = c.optString("id").ifBlank { continue }
+                val sem = "${c.optString("semester")}/${c.optString("term")}"
+                out[id] = Triple(id, c.optString("coursename"), sem)
+            }
+        }
+        // 2) 学期分组里的课程（结构可能是 {semester, term, list:[]} 或直接课程数组）
+        data.optJSONArray("semester")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val g = arr.optJSONObject(i) ?: continue
+                val sem = g.optString("semester")
+                val term = g.optString("term")
+                val semLabel = if (sem.isBlank()) "?" else "$sem/$term"
+                val list = g.optJSONArray("list") ?: g.optJSONArray("courses")
+                if (list != null) {
+                    for (j in 0 until list.length()) {
+                        val c = list.optJSONObject(j) ?: continue
+                        val id = c.optString("id").ifBlank { continue }
+                        out[id] = Triple(id, c.optString("coursename"), semLabel)
+                    }
+                }
+            }
+        }
+        return out.values.toList()
+    }
+
+    /** 学期分组本身：`data.semester[]` → (semester, term, termTxt)。用来判断「本学期有没有分组」。 */
+    fun parseKetangpaiSemesterGroups(json: String?): List<Triple<String, String, String>> {
+        if (json.isNullOrBlank()) return emptyList()
+        val obj = runCatching { JSONObject(json) }.getOrNull() ?: return emptyList()
+        val arr = obj.optJSONObject("data")?.optJSONArray("semester") ?: return emptyList()
         val out = mutableListOf<Triple<String, String, String>>()
-        for (i in 0 until list.length()) {
-            val c = list.optJSONObject(i) ?: continue
-            val id = c.optString("id").ifBlank { continue }
-            out += Triple(id, c.optString("coursename"), c.optString("classname"))
+        for (i in 0 until arr.length()) {
+            val g = arr.optJSONObject(i) ?: continue
+            out += Triple(
+                g.optString("semester"),
+                g.optString("term"),
+                g.optString("termTxt")
+            )
         }
         return out
     }

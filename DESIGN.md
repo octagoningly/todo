@@ -6316,3 +6316,106 @@ domSnippet    正文前 600 字
 - `:app:testDebugUnitTest` **441 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**；
   `adb install -r` **Success**（2026-11-16 10:38）。
 - `app/build.gradle.kts` 零 diff（临时对齐 37 跑测试，打包前已恢复 36）。
+
+---
+
+## §78 ★★ 真根因：`isstudy` 是页签映射，学生是 "1" 不是 "0"（2026-11-16）
+
+### 78.1 怎么找到的
+
+用户反复说「本学期的课是复变函数和数学物理方法」「这些全是上学期的」，
+但我们**试遍了参数组合也拿不到**。于是放弃「调参数」，改为去读**课堂派自己的前端代码**。
+
+关键突破来自课堂派 H5 线上 bundle（`w.ketangpai.com/js/app.*.js`，约 1 MB）。
+这是比任何开源项目都权威的一手证据 —— 平台自己怎么发请求，代码里写得明明白白。
+
+### 78.2 ★ 真因一：`isstudy` 不是布尔开关，是三个页签的映射值
+
+bundle 原文（`getCourseList`）：
+
+```js
+let t = { isstudy: "1"===this.isstudyTbs ? "0" : "2"===this.isstudyTbs ? "2" : "1",
+          search: e||"" };
+```
+
+页签定义：
+
+```js
+"0"===userInfo.usertype ? [我学的(name:"0"), 我协助的(name:"2")] : ...
+```
+
+`isstudyTbs` 初值 = `userInfo.usertype`。于是：
+
+| UI 页签 | `isstudyTbs` | 发给后端的 `isstudy` |
+| --- | --- | --- |
+| 我教的（教师） | `"1"` | **`"0"`** |
+| 我协助的（助教） | `"2"` | `"2"` |
+| **我学的（学生）** | `"0"` | **`"1"`** |
+
+**★ 学生对应的是 `"1"`，教师才是 `"0"` —— 和直觉正好相反。**
+而我们全链路写死 `"0"`，等于一直在按「我教的」页签查课程。
+
+后果链完全对上：
+
+```
+isstudy="0"（教师页签）
+  → topcourses 还能容错回 5 门（所以看起来"通了"）
+  → data.semester 永远是空数组  ← 学生没有"我教的课程"
+  → number=0
+  → 按学期取明细拿不到本学期
+  → 「复变函数」「数学物理方法」永不出现
+```
+
+### 78.3 ★ 真因二：`topcourses` 只是「置顶课程」，不是全部
+
+bundle 里两者分别渲染：`topCourseList` 是「置顶课程」区块，
+`semesterList` 是按学期分组的课程折叠面板，前端再逐个学期调 `semesterCourseList` 取明细。
+
+我们只读了 `topcourses` —— 而且它每项都带 `isTop:1`，这个字段名早就提示了它是置顶区，
+我当时没在意。**本学期的课很可能压根不在置顶区里。**
+
+### 78.4 顺带澄清的命名空间问题
+
+```js
+() => "/courseApi/simpleLists"           // 学生课程精简列表（小写 c）
+e  => "/courseApi/semesterList", e       // H5 首页入口（小写 c）
+e  => "/CourseApi/semesterCourseList", e // 按学期取明细（大写 C）
+```
+
+小写 `courseApi` 与大写 `CourseApi` 是**两个命名空间**。
+以及 `reqtimestamp`（毫秒）是平台 axios 拦截器**每次都自动注入**的。
+
+### 78.5 本轮改动
+
+| 件 | 改动 |
+| --- | --- |
+| `SEMESTER_LIST_BODY` | `isstudy` 从 `"0"` 改成 **`ISSTUDY_STUDENT = "1"`** 常量，一处定义、全链路生效 |
+| `ketangpaiSemesterRequests` | 重写：R1 学生页签优先 / R2 助教 / R3 教师（对照）/ `simpleLists` / `semesterCourseList` 的 all + 2026-2027-1 + 2026-2027-2 + 2025-2026-2 / `ArchiveApi/lists`；全部带 `reqtimestamp` |
+| `parseKetangpaiCourses` | **同时读 `topcourses` 与 `semester[]`**，按 id 去重 —— 这是「只看到 5 门」的直接修复 |
+| `parseKetangpaiSemesterGroups` | 新增：解析 `semester[]` 的学期分组，用来判断「本学期是否存在」 |
+| 摘要 | 增加「学期分组（N）」一行；分组为空时明确提示「isstudy 页签或账号无本学期课」 |
+| `KetangpaiIsstudyTest` | 6 条断言钉住：学生页签必须是 `"1"`、**绝不能再写回 `"0"`**、教师页签保留做对照、要查全部学期与本学期、每条都带 `reqtimestamp`、`simpleLists` 用小写命名空间 |
+
+### 78.6 验证
+
+- `:app:testDebugUnitTest` **447 条 / 0 失败**（新增 `KetangpaiIsstudyTest` 6 条）；
+  `:app:assembleRelease` **BUILD SUCCESSFUL**；`adb install -r` **Success**。
+- `app/build.gradle.kts` 零 diff。
+
+### 78.7 ★ 三条方法论教训
+
+1. **「参数都试一遍」救不了「页签/命名空间选错」。**
+   `isstudy` 看起来是布尔量，实际是枚举映射 —— 光看字段名猜语义，会一直错下去。
+2. **拿不到数据时，去读平台自己的前端代码。** 这一轮 4 次调研里，
+   只有这次直接读 bundle 的思路一击命中。开源项目是二手、可能过期；
+   bundle 是平台此刻正在跑的代码。
+3. **`isTop:1` 这种字段名早就提示了 `topcourses` 是置顶区**，
+   我当时看到了却没追问「那非置顶的在哪」。
+   **字段名里的 `top` / `total` / `number` 这类词要看懂。**
+
+### 78.8 待验证
+
+用户再点一次「抓作业」，重点看三行：
+- `semesterGroups` 是否非空 —— 非空说明 `isstudy="1"` 生效了；
+- 分组里有没有 `2026-2027/1`；
+- 课程池里有没有「复变函数」「数学物理方法」。
