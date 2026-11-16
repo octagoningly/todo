@@ -134,6 +134,20 @@ private const val DEVELOPER_HANDLE = "zuige66"
 private const val DEVELOPER_GITHUB_URL = "https://github.com/zuige66"
 private const val DEVELOPER_BLOG_URL = "https://blog.zuiges.com"
 
+/**
+ * ★ §93 贡献者。
+ *
+ * 作业自动导入这块功能（雨课堂 / 课堂派的接口探路、登录页布局、
+ * 二维码显示、字段映射）在调试过程中得到了 octagoningly 的帮助。
+ * 头像用 GitHub 的头像（`https://github.com/octagoningly.png`，
+ * 已存为 `res/drawable-nodpi/contributor_octagoningly.jpg`，460×460），
+ * 离线也能显示，不联网。
+ */
+private const val CONTRIBUTOR_NAME = "octagoningly"
+private const val CONTRIBUTOR_HANDLE = "octagoningly"
+private const val CONTRIBUTOR_GITHUB_URL = "https://github.com/octagoningly"
+private const val CONTRIBUTOR_BLOG_URL = "https://octagoningly.github.io/"
+
 /** hero 占屏高的比例。原页是 0.60（锁屏整屏），这里是普通页面，留矮一点让列表能露头。 */
 private const val HERO_HEIGHT_FRACTION = 0.46f
 private const val BACKGROUND_SPEED = 0.12f
@@ -306,6 +320,9 @@ fun AboutScreen(
             }
             item { AboutSectionTitle("开发者") }
             item { DeveloperCard() }
+            // ★ §93：贡献者。作业自动导入这块在调试期间得到了 octagoningly 的帮助。
+            item { AboutSectionTitle("贡献者") }
+            item { ContributorCard() }
             item { AboutSectionTitle("应用") }
             item {
                 AboutCard {
@@ -557,6 +574,51 @@ private fun LinkRow(title: String, summary: String, onClick: () -> Unit) {
  */
 @Composable
 private fun DeveloperCard() {
+    PersonCard(
+        name = DEVELOPER_NAME,
+        handle = DEVELOPER_HANDLE,
+        avatarRes = R.drawable.dev_avatar,
+        githubUrl = DEVELOPER_GITHUB_URL,
+        blogUrl = DEVELOPER_BLOG_URL,
+        blogLabel = "blog.zuiges.com",
+        avatarDesc = "开发者头像"
+    )
+}
+
+/**
+ * ★ §93 贡献者卡片。与开发者卡片同一套视觉，只是换了人和链接。
+ *
+ * 抽成 [PersonCard] 是为了不复制粘贴 —— AGENTS.md §2 第 1 级：
+ * 「能复用就不新写」。两张卡片除了数据完全一致。
+ */
+@Composable
+private fun ContributorCard() {
+    PersonCard(
+        name = CONTRIBUTOR_NAME,
+        handle = CONTRIBUTOR_HANDLE,
+        avatarRes = R.drawable.contributor_octagoningly,
+        githubUrl = CONTRIBUTOR_GITHUB_URL,
+        blogUrl = CONTRIBUTOR_BLOG_URL,
+        blogLabel = "octagoningly.github.io",
+        avatarDesc = "贡献者头像"
+    )
+}
+
+/**
+ * 头像 + 名字 + 账号 + 可展开的链接区。开发者与贡献者共用。
+ *
+ * 头像用真图（`res/drawable-nodpi/`，本地文件，不联网），圆裁 56dp。
+ */
+@Composable
+private fun PersonCard(
+    name: String,
+    handle: String,
+    avatarRes: Int,
+    githubUrl: String,
+    blogUrl: String,
+    blogLabel: String,
+    avatarDesc: String
+) {
     val context = LocalContext.current
     val cs = MaterialTheme.colorScheme
     var expanded by remember { androidx.compose.runtime.mutableStateOf(false) }
@@ -566,7 +628,7 @@ private fun DeveloperCard() {
             dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessMediumLow
         ),
-        label = "developerArrow"
+        label = "personArrow"
     )
 
     Surface(
@@ -586,11 +648,10 @@ private fun DeveloperCard() {
                     .padding(horizontal = 18.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // 头像与 HyperMeloLock 关于页同一张：res/drawable-nodpi/dev_avatar.jpg（500×500）。
                 // 放 drawable-nodpi 是刻意的：不要密度缩放，圆裁后按 56dp 原样裁切。
                 Image(
-                    painter = painterResource(R.drawable.dev_avatar),
-                    contentDescription = "开发者头像",
+                    painter = painterResource(avatarRes),
+                    contentDescription = avatarDesc,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .size(56.dp)
@@ -598,13 +659,13 @@ private fun DeveloperCard() {
                 )
                 Column(modifier = Modifier.padding(start = 14.dp)) {
                     Text(
-                        DEVELOPER_NAME,
+                        name,
                         fontSize = 19.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = cs.onSurface
                     )
                     Text(
-                        "@$DEVELOPER_HANDLE",
+                        "@$handle",
                         fontSize = 14.sp,
                         color = cs.onSurfaceVariant
                     )
@@ -638,8 +699,8 @@ private fun DeveloperCard() {
                 ) + fadeOut()
             ) {
                 Column(modifier = Modifier.padding(bottom = 8.dp)) {
-                    LinkRow("GitHub", DEVELOPER_HANDLE) { openUrl(context, DEVELOPER_GITHUB_URL) }
-                    LinkRow("博客", "blog.zuiges.com") { openUrl(context, DEVELOPER_BLOG_URL) }
+                    LinkRow("GitHub", handle) { openUrl(context, githubUrl) }
+                    LinkRow("博客", blogLabel) { openUrl(context, blogUrl) }
                 }
             }
         }

@@ -33,6 +33,11 @@
     <!-- 安装更新包。仅用于我们自己下载的 APK，不静默安装。 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- ★ 实验分支「新增自动导入雨课堂和课堂派作业功能」：设置里的 WebView 登录页
+         也复用同一个 INTERNET 权限，不新增任何权限。用户主动在平台官方页登录，
+         会话凭证只留在 WebView 私有目录，待办数据不上传；设置项默认关闭。
+         ⚠ release/vivo-store 不申请任何网络权限、且软著申请期代码冻结 ——
+            本功能及其 diff 一律不得 cherry-pick 过去（永久功能分叉，见 DESIGN.md §70）。 -->
     <application
         android:name=".OnelineApp"
         android:allowBackup="false"

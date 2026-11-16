@@ -42,6 +42,12 @@ interface TodoDao {
     @Query("UPDATE todos SET archived = 0 WHERE id = :id")
     suspend fun unarchiveById(id: Long)
 
+    // ---------- 作业自动导入（v9 / §85）----------
+
+    /** 返回所有已导入过的平台编号，导入前一次性取回，避免逐条查库。 */
+    @Query("SELECT externalId FROM todos WHERE source = :source AND externalId != ''")
+    suspend fun externalIdsOf(source: String): List<String>
+
     @Query("UPDATE todos SET title = :title, detail = :detail, tag = :tag, dueAtMillis = :dueAtMillis, startAtMillis = :startAtMillis, endAtMillis = :endAtMillis, hasExactTime = :hasExactTime, repeatDays = :repeatDays WHERE id = :id")
     suspend fun updateContent(id: Long, title: String, detail: String, tag: String, dueAtMillis: Long?, startAtMillis: Long?, endAtMillis: Long?, hasExactTime: Boolean, repeatDays: Int)
 

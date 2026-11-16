@@ -35,7 +35,13 @@ import com.lirui.oneline.update.ApkInstaller
 import com.lirui.oneline.update.AppUpdate
 import com.lirui.oneline.update.UpdateCheck
 import com.lirui.oneline.update.UpdateService
+import com.lirui.oneline.sync.HomeworkSyncWorker
+import com.lirui.oneline.sync.SyncEngine
+import com.lirui.oneline.sync.SyncSettings
 import com.lirui.oneline.util.SettingsRepo
+import androidx.compose.runtime.DisposableEffect
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MainActivity : androidx.activity.ComponentActivity() {
 
@@ -146,6 +152,61 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 // 专注同理：闹钟条目不落盘，冷启动 / 升级 / 重启后要把「还在跑的专注」
                 // 的到点闹钟和常驻通知重新挂上，否则计时会一直走、永远不响。
                 FocusEngine.restore(appContext, System.currentTimeMillis())
+            }
+
+            // ── ★ §88/§96 自动抓取作业 ──
+            // 三条触发路径覆盖全部场景（用户指出「App 一直开着就不会抓」）：
+            //   1. 冷启动（本处 LaunchedEffect）—— App 首次打开 / 进程重建
+            //   2. 回前台（下面的 ON_START 观察者）—— App 一直在前台放着
+            //   3. 周期后台（HomeworkSyncWorker）—— App 在后台或被杀
+            // 门槛全在 SyncSettings.shouldAutoSync（总闸 / 仅手动 / 6 小时间隔），
+            // 去重保证重复触发不会堆条目。
+            LaunchedEffect(Unit) {
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        // 总闸开着就保证后台周期任务在跑；关着就撤掉。
+                        if (SyncSettings.enabled(appContext)) {
+                            HomeworkSyncWorker.ensureScheduled(appContext)
+                        } else {
+                            HomeworkSyncWorker.cancel(appContext)
+                        }
+                        val titles = SyncEngine.autoSyncAndImport(appContext)
+                        if (titles.isNotEmpty()) {
+                            // ★ §96 用户要求：抓到新作业就发通知
+                            //   文案「老师发布了新的作业，已将作业放进待办！」
+                            NotificationHelper.postNewHomework(appContext, titles)
+                        }
+                    }.onFailure {
+                        android.util.Log.w("OnelineProbe", "autoSync failed", it)
+                    }
+                }
+            }
+
+            // ★ §96 回前台时补抓一次。
+            //   场景：用户把 App 挂在后台两小时再切回来 —— 冷启动逻辑不会再跑，
+            //   周期 Worker 也可能还没到点。这里补一次，门槛（6 小时）会自动去重。
+            val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+            var foregroundSyncTick by remember { mutableIntStateOf(0) }
+            DisposableEffect(lifecycleOwner) {
+                val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                    if (event == androidx.lifecycle.Lifecycle.Event.ON_START) {
+                        foregroundSyncTick++
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+            }
+            LaunchedEffect(foregroundSyncTick) {
+                // 首次进入由上面的冷启动负责，这里只处理"回到前台"。
+                if (foregroundSyncTick == 0) return@LaunchedEffect
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        val titles = SyncEngine.autoSyncAndImport(appContext)
+                        if (titles.isNotEmpty()) {
+                            NotificationHelper.postNewHomework(appContext, titles)
+                        }
+                    }
+                }
             }
 
             // ★ 下面这一整块是「从 SharedPreferences 建出来的状态」。恢复备份后 epoch +1，

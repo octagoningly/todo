@@ -5421,3 +5421,1633 @@ zuige 澄清：`release/vivo-store` 正在**申请软件著作权**，最好先�
 - `:app:testDebugUnitTest` **398 条 / 0 失败** → `:app:assembleRelease` `BUILD SUCCESSFUL`。
   `FabPositionTest` 从 5 条增至 7 条（右下角吸附区边界 + 负半径不放大吸附区）。
 - 版本号不动、不发版；Manifest 零改动；合规分支零改动。
+
+---
+
+## §70 作业自动导入：链路骨架与登录探针（2026-11-15，功能分支）
+
+**分支**：`新增自动导入雨课堂和课堂派作业功能`（从 `main` 切出）。
+**需求（zuige）**：设置里加一个入口，**默认关闭**；开启后下拉选择第三方平台并做相关设置，
+点开后在浏览器里登录，App 记住会话，定时/打开 App/手动同步作业，
+自动写成「复变函数第 x 次作业 + 截止时间」这样的待办。
+本轮明确要求「**先把大概链路写好，然后我试试能不能登录**」。
+
+### 70.1 四级顺序结论（AGENTS.md §2）
+
+1. **复用旧模块**：`SettingsCard` / `ItemDivider` / `SettingsDropdown` / `ToggleItem` /
+   `SectionHeader` 全套照搬设置页现成组件；`ui/theme/Tokens.kt` 的 `cardBackground` 由
+   `SettingsCard` 间接吃到；单测沿用 `ParserTest` 那套纯 JVM 写法。
+   `parser/Parser.kt` 本轮**不适用** —— 平台给的是结构化时间戳，不需要自然语言解析。
+2. **官方库**：`WebView` + `CookieManager`（官方 API，本轮即第 2 级）、
+   M3 `ExposedDropdownMenuBox` / `OutlinedTextField` / `Dialog`；**不引任何新依赖**
+   （`build.gradle.kts` 无 OkHttp，也不引 security-crypto）。
+3. **开源参考**：`sqyCoder/tuoyixia`（Android / MIT，WebView 登录 → Cookie 复用）验证了
+   链路可行性；其 `endAt = now + 剩余分钟` 会漂移、单课异常静默跳过会覆盖旧数据，
+   **两点都不照抄**。2026 年仍活跃的雨课堂油猴脚本已不抽 Cookie、改在页面上下文里
+   做 DOM 操作，反过来支持「页面内 fetch」路线。
+4. **手写**：`sync/SyncRules.kt` 的判定/归一化/校验全部抽成无 Android 依赖的纯函数，
+   补 `SyncRulesTest`，理由记在本节 —— 符合第 4 级的三条要求。
+
+### 70.2 本轮做了什么 / 没做什么
+
+| 已做 | 未做（等登录验证） |
+| --- | --- |
+| `sync/SyncContract.kt` 平台枚举、作业契约、触发档位 | 作业抓取与 JSON 字段映射 |
+| `sync/SyncRules.kt` 域名归一化、Cookie 解析、会话判定、去重键、绝对时间校验 | Room v8→v9 加列与迁移链 |
+| `sync/SyncSettings.kt` 独立 pref、总闸默认 false | 落库、`ReminderScheduler.scheduleBlocking()` 排提醒 |
+| `sync/SyncCredentialStore.kt` 读/清 WebView 会话 | WorkManager 定时唤醒 |
+| `sync/SyncEngine.kt` 登录探针（不发请求） | 多校 `uv_id` / 接口字段适配 |
+| `ui/screen/HomeworkSyncLoginDialog.kt` 官方页登录对话框 | 纯后台无头同步 |
+| 设置页第 8 节「作业自动导入」 | 隐私政策正文、发版 |
+
+### 70.3 三条关键决策
+
+- **不接触账号密码、不把 Cookie 落进 SharedPreferences**。账号密码由用户在平台官方页输入；
+  Cookie 由 WebView 自己持久化在 `app_webview/`（`allowBackup=false`），
+  只在用户点「我已完成登录」时读一次快照，诊断只输出 Cookie **名字**、绝不输出值。
+  下一轮接抓取走「页面内注入 fetch」：同源请求自动带凭证，绕开 HttpOnly / token 解析 / CORS，
+  也更像「用户在官方页面自己操作」。
+- **不动 Room**。要存外部作业 ID 才会触发 v8→v9 迁移（显式 DEFAULT + hasColumn 幂等 +
+  `MigrationTestHelper` 链 + `BackupRules.DB_VERSION` + schema json + 备份兼容）。
+  接口字段还没确证就动 schema，是本末倒置。
+- **默认关闭 + 独立 pref**。总闸关掉时整节只显示一行开关，不建 WebView、不读 Cookie、
+  不发请求；设置放独立 `oneline_homework_sync`，不跟着 `BackupCodec` 导出（学校域名属于就读信息）。
+  「手动同步一次」明确提示链路状态，不做点了没反应的假按钮。
+
+### 70.4 平台侧已核实与待验证
+
+- 课堂派：2022 年 Fiddler 抓包显示 `openapiv5(x).ketangpai.com//UserApi/login` 响应体
+  `data.token`，响应头 `ketangpai_home_remember` 内含 token（**Max-Age=10800**）、
+  `PHPSESSID`；CORS 放行 `www.ketangpai.com`。作业接口 `FutureV2/CourseMeans/getCourseContent`
+  回 `title` / `endtime`（Unix 秒）/ `coursename`。凭证可能 3 小时过期，需续期设计。
+- 雨课堂：`www.yuketang.cn/web?type=3` 同时有账号登录 / 扫码 / 微信快捷登录；
+  社区脚本用 `sessionid` + `csrftoken` Cookie，`user-courses` 回 `course_name`、
+  `course/chapter` 的 `leaf_type=6` 回 `name` 与 `id`。
+  **绝对截止时间字段在开源生态里仍未找到公开证据** —— 这是下一轮探针的通过标准。
+- 三道待验证是非题：① WebView 登录后课堂派凭证能否稳定取得并刷新；
+  ② 雨课堂登录后作业接口能否拿到**绝对**时间（只有「剩余 X 小时」判不通过）；
+  ③ 科目 / 标题 / 绝对时间三字段在 ≥2 门课、≥2 次拉取、换 1 个校子域时是否稳定。
+
+### 70.5 分支与合规边界
+
+- 功能**只落本功能分支**，不动 `main`，也不动 `release/vivo-store`。
+  后者不申请任何网络权限且处于软著申请冻结期，按 `AGENTS.md §4` 不改、不 cherry-pick、
+  不补功能、不发版 —— **这是永久功能分叉，不记作欠账**。
+- `AndroidManifest.xml` 只补注释（不新增权限），写明 WebView 登录复用 `INTERNET`
+  及「合规分支一律不得带入」。
+- 雨课堂《用户协议》明文禁止未经授权访问、抓取、绕过技术限制与账号信息共享；
+  功能定型前需单独评估合规与商店审核，本轮仅为本人账号的本机试验。
+- 版本号不动、不发版，不碰 Release / Hexo / 博客文章 / `latest.json`。
+
+### 70.6 验证
+
+- `:app:testDebugUnitTest` **406 条 / 0 失败**（新增 `SyncRulesTest` 8 条：域名归一化、
+  Cookie 解析、会话判定、登录 URL 与校域名、绝对时间边界、三字段校验、去重键与诊断脱敏）。
+- `:app:compileDebugKotlin` / `:app:compileReleaseKotlin` / `:app:assembleDebug` **BUILD SUCCESSFUL**，
+  产出 `app/build/outputs/apk/debug/app-debug.apk` 供登录试验。
+- `:app:assembleRelease` **BUILD SUCCESSFUL**。签名材料后来补齐到项目内的
+  `keystore.properties` + `app/oneline-release.keystore`（`.gitignore` 第 18/19 行
+  已忽略，不进仓库）；产物签名 SHA-256 `c0847ef1…2548` 与机上 v1.0.14 完全一致，
+  `adb install -r` 覆盖安装 **Success**（2026-11-15 14:48），
+  数据保留、包名不变 —— debug 包签名不同会报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`。
+- ⚠ **SDK 环境说明**：本机 `ANDROID_HOME` 只有 `platforms/android-37.0`，
+  项目 `compileSdk = 36` 需要 `platforms/android-36`，AGP 联网拉 manifests 超时
+  （官方包 65MB 下载过慢）。验证时把 `compileSdk` **临时**对齐 37 跑完编译与单测，
+  **随后已改回 36，`app/build.gradle.kts` 最终零 diff**。
+  在补齐 SDK Platform 36 的机器上应按 §6.4 再跑一次完整的
+  `testDebugUnitTest → assembleRelease`。当前 debug / release 两个包都是临时对齐 37
+  编出的，仅供本人登录试验，**不可用于对外发版**。
+- `local.properties` 未写入仓库；`ANDROID_HOME` / `JAVA_HOME` 都只作为进程环境变量传入。
+- 版本号不动、不发版；合规分支零改动。
+
+---
+
+## §70.7 真机试用反馈：四处修复（2026-11-15 下午）
+
+zuige 装上后反馈四件事，全部成立。
+
+### 70.7.1 ★ 没登录却显示「已检测到会话凭证」
+
+**根因**：旧版 `SyncRules.hasSession()` 是「任一关键 Cookie 存在即算登录」，
+而 `csrftoken`（Django 的 CSRF token）与 `PHPSESSID`（PHP 匿名会话）
+**光打开登录页就会下发** —— 雨课堂未登录也满足判据，课堂派同理会被误判。
+
+**修法**：`SyncPlatform` 把 Cookie 分成两类 —— 每平台只认一个
+`authCookieName`（课堂派 `ketangpai_home_remember`、雨课堂 `sessionid`），
+`hintCookieNames` 仅供诊断展示。`hasSession` 严格判定且 **fail-closed**：
+读不到认证 Cookie 一律当未登录。`SyncRulesTest` 补了回归用例
+（只有 `csrftoken` / 只有 `PHPSESSID` / 空值 / 跨平台串值都必须为 false）。
+设置页文案同步改成「检测到 xxx（仅本机 Cookie 判定）」，不再宣称登录成功 ——
+本机有 Cookie **不等于**平台校验过凭证有效性。
+
+### 70.7.2 雨课堂二维码被顶部说明挡住
+
+旧对话框顶部堆了 `TopAppBar` + 两段说明 + URL + 分隔线（约 160dp），
+WebView 可视高度被压掉；再加上 `loadWithOverviewMode = true` 会把 PC 版登录页
+整体缩到一屏宽，二维码被缩小挤到边角，真机上扫不了。
+
+**修法**：顶栏压成一行 46dp（标题 + 关闭），说明文字与 URL 全部移到设置页，
+WebView 用 `weight(1f)` 吃满中间；去掉 `loadWithOverviewMode`，保留
+`useWideViewPort` 与缩放支持。整个对话框只剩「一条顶栏 / 页面 / 一条底栏」。
+
+### 70.7.3 点「同步」只弹一句固定提示
+
+本轮本来就没接作业抓取，但固定 Toast 让人以为「我登录了却不让同步」。
+改成「**检查同步链路**」：当场读 Cookie 快照，把平台、登录页 URL、
+期望的认证 Cookie 名、实际读到的 Cookie 名、以及「作业抓取尚未接入」
+一起摊在设置页诊断区。按钮从此有真实输出，也不假装能同步。
+
+### 70.7.4 「学校域名」是干嘛的
+
+- **课堂派**：统一官网，这行完全用不上 → 现在**只在选雨课堂时才显示**。
+- **雨课堂**：各校是独立子站（如 `nk.yuketang.cn`、`gsscut.yuketang.cn`），
+  这个 host 决定两件事：① 打开哪个登录页；② 从哪些域名读登录 Cookie。
+  留空就用通用 `www.yuketang.cn`；如果学校有专属站却没填，
+  登录凭证可能落在别的 host 上，这里就会读不到（fail-closed 报未登录）。
+  文案已改成「学校雨课堂网址（有就填，没有留空）」并附作用说明。
+
+### 70.7.5 验证
+
+- `:app:testDebugUnitTest` **406 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**。
+- 仍按 §70.6 的方式临时对齐 `compileSdk` 37 后改回 36，`build.gradle.kts` 零 diff。
+- 四级顺序：复用设置页组件与 `SyncRules` 纯函数；官方 `Dialog` / `AndroidView` /
+  `WebView`；本轮无新增开源参考；手写部分仍是无 Android 依赖的判定 + 单测。
+
+---
+
+## §70.8 第二轮真机反馈：布局推倒重来 + 重新登录入口（2026-11-15）
+
+### 70.8.1 ★ 二维码仍被挡住一半
+
+§70.7 只是把顶栏**压矮**，但它仍在 `Column` 里 —— `AndroidView` 被排在顶栏下方，
+网页内容整体往下推；PC 版登录页自身又不能滚动，二维码正好落在可视区外，
+用户「下移不了」。压矮顶栏不解决**布局占位**这个根因。
+
+**改成 Box 叠加**：`AndroidView(Modifier.fillMaxSize())` 从屏幕顶端铺到底端，
+所有操作按钮作为**底部半透明浮层**叠在网页之上，顶部 100% 干净、二维码零遮挡。
+同时打开 `builtInZoomControls` / `displayZoomControls=false`，页面布局不友好时
+用户还能双指缩放。整个登录页不再有任何常驻文字说明。
+
+### 70.8.2 课堂派「已登录却读不到凭证」
+
+先纠正一个判断：`CookieManager.getCookie()` 读的是**持久化的 Cookie jar**，
+不是「登录那一瞬间的事件」—— 已经登录的状态随时都该读得到，
+和是否刚完成登录无关。
+
+更可能的原因是认证 Cookie 落在了别的域：课堂派登录会跨官网 / 微信入口 /
+API 域。已把 `extraCookieHosts` 扩充到
+`www.ketangpai.cn` / `w.ketangpai.cn` / `coursehome.ketangpai.com` /
+`openapiv5` ~ `openapiv53`，逐个读取再合并。
+
+并按用户要求加了「**重新登录**」按钮（登录页底部浮层）：只清**本平台相关域**的
+Cookie 再 `loadUrl(登录页)`，不误伤另一个平台、不碰 App 里的待办数据。
+清完后完整登录一次，再点「我已完成登录」，诊断会列出实际读到的 Cookie 名，
+据此就能定位缺的是 `ketangpai_home_remember` 还是别的字段。
+
+### 70.8.3 设置页说明太多、诊断关不掉
+
+- 删掉底部那一大段常驻说明，`ToggleItem` / 学校域名 / 各行的 `supportingText`
+  全部压成一行；详细口径留在本文档。
+- 诊断抽成 `briefDiagnosis()`，只留两行：结论 + 需要的认证 Cookie、实际读到的 Cookie 名。
+- 诊断区改成带「**×**」的 `Row`，随时可关；「清除登录状态」不再反过来生成一条新诊断。
+
+### 70.8.4 验证
+
+- `:app:testDebugUnitTest` **406 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**。
+- `adb install -r` **Success**（2026-11-15 22:11:58），仍是 1.0.14 / 48，数据保留。
+- `compileSdk` 临时对齐本机 37 后改回 36，`build.gradle.kts` 零 diff。
+- 四级顺序：复用 `SettingsCard` / `SettingsDropdown` / `SyncRules.parseCookieHeader`；
+  官方 `Box` / `AndroidView` / `WebView` / `TextButton`；本轮无新增开源参考；
+  手写部分仍是无 Android 依赖的纯函数 + 单测。
+
+---
+
+## §70.9 第三轮反馈：状态栏回归 + 停止猜 Cookie 名（2026-11-15 深夜）
+
+### 70.9.1 二维码被**系统状态栏**截断
+
+不是 App 顶栏的问题：§70.8 把布局从 `Column` 改成 `Box + fillMaxSize()` 时，
+把 §70.7 里的 `statusBarsPadding()` 一起删掉了 —— WebView 直接铺到系统状态栏
+底下，PC 登录页二维码的上半截被状态栏盖住。
+
+**修法**：`Box` 补回 `statusBarsPadding()`（网页内容从状态栏下方开始），
+底部浮层加 `navigationBarsPadding()`（按钮不被手势条压住）。
+★ 教训：**去掉 App 顶栏 ≠ 可以不处理系统 inset**，两者是两回事。
+
+### 70.9.2 ★ 课堂派「登录成功却永远未登录」
+
+连续两轮都读不到 `ketangpai_home_remember`。这个字段来自 2022 年一份抓包，
+课堂派现状显然已经不写它（或换了域 / 换了存储方式）。继续枚举 Cookie 名是死路，
+而且会一直把「明明已经登录」的用户卡在「未登录」。
+
+骨架阶段本来就没有真实接口探测，因此把判定口径改成：
+
+| | 之前 | 现在 |
+| --- | --- | --- |
+| 登录态来源 | 猜中的认证 Cookie 名 | **用户在官方页登录后主动点「我已完成登录」** |
+| 自动检测 | 决定状态 | 降级为诊断信息，不再覆盖状态 |
+| 状态文案 | 「未检测到 xxx」 | 「已登录 / 未登录」 |
+
+- 新增 `SyncSettings.userConfirmedLogin`，点「我已完成登录」时置 true，
+  「清除登录状态」经 `clearStatus()` 一并复位。
+- `briefDiagnosis()` 只输出两行**技术信息**：自动检测是否读到认证 Cookie、
+  本机实际读到的 Cookie 名清单 —— 这份清单就是下一轮定位 Q1 的依据。
+- 「检查同步链路」不再推翻用户确认。
+
+⚠ **这不代表凭证已向平台校验过**。等接入作业抓取，第一次真实接口调用会
+自然暴露凭证是否有效（401 → 提示重新登录）。Q1 仍未通过，只是不再阻塞试用。
+
+### 70.9.3 已知遗留
+
+对话框内「重新登录」只清 Cookie、不复位 `userConfirmedLogin`；若用户重新登录后
+不点「我已完成登录」直接关闭，状态会残留「已登录」。骨架阶段没有实际同步，
+不会造成错误行为；接入抓取时一并收口。
+
+### 70.9.4 验证
+
+- `:app:testDebugUnitTest` **406 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**。
+- `adb install -r` **Success**，仍 1.0.14 / 48，数据保留。
+- `compileSdk` 临时对齐本机 37 后改回 36，`build.gradle.kts` 零 diff。
+- 四级顺序：复用 `SettingsRepo` 风格的独立 pref 与 `SyncRules` 纯函数；
+  官方 `statusBarsPadding` / `navigationBarsPadding` / `WebView`；
+  本轮无新增开源参考；手写部分仍是无 Android 依赖的纯函数 + 单测。
+
+---
+
+## §70.10 第四轮反馈：页面可滚动 + 诊断改成链路状态（2026-11-15 深夜）
+
+### 70.10.1 雨课堂二维码仍被截 → 让页面能上下移动
+
+`statusBarsPadding()` 解决的是**系统 inset**，但雨课堂 PC 登录页自己把
+`html` / `body` 锁成了固定高度、二维码贴在视口最顶，而且页面**滚不动** ——
+所以加了 padding 也还是被切。
+
+**修法**：`WebViewClient.onPageFinished` 注入一段纯布局 CSS
+（[`SCROLL_FIX_JS`]）：把 `html` / `body` 的 `overflowY` 解锁为 `auto`、
+高度交回内容，并给 `body` 加 56px 顶部留白。页面从此能上下滑动，
+二维码可以滑到可视区中间；已有的双指缩放继续保留。
+每次 `onPageFinished` 都补一次，覆盖 SPA 切页 / 重定向后样式被重建的情况。
+
+★ 边界：这段注入**只改样式**，不读输入框、不拦表单、不取页面任何数据，
+与「不接触账号密码」的原则不冲突。
+
+### 70.10.2 「检查同步链路还是出问题」
+
+功能其实没坏：按钮只报告链路状态，但上一版诊断把
+「自动检测未读到 `ketangpai_home_remember`」写得像报错，而按钮名又让人
+以为会真的拉作业。课堂派现状已不写这个 Cookie 名，那行永远失败。
+
+**改成中性的链路状态**（`briefDiagnosis(confirmed, cookieNames)`）：
+
+```
+登录：已确认 · 作业抓取：尚未接入
+本机凭证：N 项 · <Cookie 名清单>
+```
+
+- 不再出现「未读到 xxx」这种误导性措辞；Cookie 清单保留作 Q1 定位依据。
+- `supportingContent` 改成「查看链路状态；作业抓取尚未接入」。
+- ⚠ **明确边界**：本轮仍只有链路骨架，**作业抓取、字段映射、落库、排提醒都没接**。
+  点「检查」是看状态，不是同步。要真正拉作业，下一步必须做
+  「页面内 fetch 调接口」的真实探测，先答完 Q1 / Q2（尤其雨课堂有没有
+  **绝对截止时间**字段），否则接了也是错的数据。
+
+### 70.10.3 验证
+
+- `:app:testDebugUnitTest` **406 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**。
+- `adb install -r` **Success**，仍 1.0.14 / 48，数据保留。
+- `compileSdk` 临时对齐本机 37 后改回 36，`build.gradle.kts` 零 diff。
+- 四级顺序：复用 `SyncRules` 纯函数与现有设置组件；官方 `WebViewClient` /
+  `evaluateJavascript` / `statusBarsPadding`；本轮无新增开源参考；
+  手写部分仍是无 Android 依赖的纯函数 + 单测。
+
+---
+
+## §71 抓取探路：登录里程碑 + 页面内 fetch 探针（2026-11-15 深夜）
+
+### 71.1 里程碑
+
+登录链路（含 WebView 布局、状态栏 inset、登录态确认）到此可用，
+打本地 tag **`雨课堂和课堂派登录成功`** → `485e1ad`。不发版、不动 `main`、
+不动合规分支，不写 `latest.json` / Release / 博客。
+
+### 71.2 为什么不直接写抓取
+
+课程列表、作业/考试节点、尤其**绝对截止时间字段**都还没在真实响应里见过。
+课堂派 `ketangpai_home_remember` 已证实过时，说明 2022 年抓包不能当契约；
+雨课堂的 `endtime` 在开源生态里至今没有公开证据。
+直接照抄接口写映射，很可能把错的时间写进待办（还可能触发 Room v8→v9）。
+所以先做**只读探针**：用用户已登录的页面会话调候选接口，把原始响应带回来。
+
+### 71.3 探针设计
+
+| 件 | 作用 |
+| --- | --- |
+| `sync/ProbeJs.kt` | 纯 Kotlin 生成 JS；结果写 `window.__oneline_probe`，统计关键词并生成一行摘要 |
+| `sync/ProbeRunner.kt` | `evaluateJavascript` 启动 + 主线程轮询取回（最多 12s），原始 JSON 写 `getExternalFilesDir()/oneline-probe.json`（零权限） |
+| 登录页「抓作业」按钮 | 在**当前会话**里触发，完成后自动返回设置页显示摘要 |
+| `ProbeJsTest` | 把接口路径 / 关键词表 / 占位符替换钉进单测 |
+
+**候选接口**（按平台分支，逐个试、记录 HTTP 状态与响应片段）：
+
+- 课堂派：`CourseApi/semesterList` → `CourseApi/semesterCourseList` →
+  `FutureV2/CourseMeans/getCourseContent`（`contenttype=4` 作业 / `6` 考试）。
+  API host 依次试 `openapiv5` / `52` / `53`；`token` 头优先从 `localStorage` 找，
+  找不到如实记 `tokenFound=false`。
+- 雨课堂：`mooc-api/v1/lms/user/user-courses/` →
+  `learn/course/chapter?cid=…&sign=…`（`leaf_type=6` 作业）→ `leaf_info`，
+  另试 `user-tasks` / `exercise/list` 两个可能的聚合入口。同源，`credentials:'include'` 自动带 Cookie。
+
+**关键词表**：`homework / test / exam / quiz / deadline / endtime / end_time /
+due_at / due / 作业 / 考试 / 测验 / 截止 / course_name / coursename /
+classroom_id / courseid / title / mstatus / submit_state`。
+命中数直接回答「作业/考试在哪、有没有绝对截止时间」。
+
+### 71.4 边界
+
+- 探针**只发 GET/POST 读取**，不提交、不修改任何平台数据；不注入表单操作。
+- 不落库、不动 Room、不动提醒排期；结果文件只在本机，可用 `adb pull` 取回分析。
+- 设置页只显示一行摘要（诊断区仍有「×」），不糊用户一屏文字。
+- 这一步答完 Q1 / Q2 之后，才决定是否做字段映射 → Room v8→v9 →
+  `TodoRepository.addFromParsed` → `ReminderScheduler.scheduleBlocking()`。
+
+### 71.5 验证
+
+- `:app:testDebugUnitTest` **409 条 / 0 失败**（新增 `ProbeJsTest` 3 条）；
+  `:app:assembleRelease` **BUILD SUCCESSFUL**；
+  `adb install -r` **Success**（2026-11-15 23:56:34），仍是 1.0.14 / 48，数据保留。
+- `compileSdk` 临时对齐本机 37 后改回 36，`build.gradle.kts` 零 diff。
+- 四级顺序：复用 `SyncPlatform` / `SyncRules` 与设置页组件；
+  官方 `WebView.evaluateJavascript` / `Handler` / `getExternalFilesDir`；
+  开源参考为 `Axope/ketangpai`、`WolfIsMyName/yuketangHelper`（只借接口路径，不引依赖）；
+  手写部分抽成无 Android 依赖的 `ProbeJs` + `ProbeJsTest`。
+
+---
+
+## §72 首次探针回收：两个真问题（2026-11-16 00:04）
+
+### 72.1 `adb pull` 回来的真实结果
+
+用户在课堂派、雨课堂各点了一次「抓作业」。设备上只有一个
+`oneline-probe.json`（1032 B），`platform=yuketang`：
+
+```
+courses      200  {"msg":"XTBZ IS REQUIRED","error_code":40000,...,"success":false}
+userTasks    200  同上
+exerciseList 200  同上
+keywords: {}（无命中）
+firstCourse: {id:null,...}
+```
+
+**两条结论**：
+
+1. **接口路径是对的** —— 返回 200 + 业务错误，不是 404。缺的是 `xtbz` 请求头。
+   开源脚本 `homeworkHelper.py` 的 headers 里明确写着 `xtbz: cloud`
+   （还有 `x-csrftoken` / `university-id`），我写探针时漏了。
+   加上之后 `user-courses` 才有机会返回真实课程列表。
+2. **课堂派的结果被覆盖了** —— 两个平台都写同一个 `oneline-probe.json`，
+   后点的雨课堂把先点的课堂派冲掉。
+
+### 72.2 修复
+
+| 问题 | 修法 |
+| --- | --- |
+| 雨课堂全部 `XTBZ IS REQUIRED` | 所有 `mooc-api` 请求带 `H = {'xtbz':'cloud'}`，并从 Cookie 补 `x-csrftoken` / `university-id`（读得到才加）；`P.probeHeaders` 记录实际带的头便于复核 |
+| 结果互相覆盖 | `ProbeRunner.probeFile(context, platform)` 改成 `oneline-probe-<platform>.json`；摘要里显示实际文件名 |
+| 回归保护 | `ProbeJsTest` 增断言：`xtbz` / `'cloud'` / `x-csrftoken` 必须在雨课堂 JS 里 |
+
+★ 后续写正式抓取层时，`xtbz: cloud` 是**雨课堂的必需头**，别再漏。
+
+### 72.3 下一步（等用户重跑）
+
+两个平台各再点一次「抓作业」→ 目录里会有
+`oneline-probe-ketangpai.json` 与 `oneline-probe-yuketang.json` →
+`adb pull` 取回后看：课程列表能否解析、作业/考试节点在哪、
+**有没有绝对截止时间字段**。答完 Q1 / Q2 才动字段映射与 Room。
+
+### 72.4 验证
+
+- `:app:testDebugUnitTest` **409 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**；
+  `adb install -r` **Success**（2026-11-16 00:09:11），仍是 1.0.14 / 48，数据保留。
+- `compileSdk` 临时对齐本机 37 后改回 36，`build.gradle.kts` 零 diff。
+- 四级顺序：复用 `ProbeJs` / `ProbeRunner`；官方 `fetch` 请求头与
+  `getExternalFilesDir`；开源参考仍是 `homeworkHelper.py` 的请求头（只借参数不引依赖）；
+  手写部分仍是无 Android 依赖的 JS 生成 + 单测。
+
+---
+
+## §73 第二次探针回收：雨课堂打通，课堂派需换路线（2026-11-16 00:21）
+
+### 73.1 雨课堂（Q2 接近通过）
+
+`adb pull` 回 `oneline-probe-yuketang.json`（3400 B），`xtbz` 修复生效：
+
+| 接口 | 结果 |
+| --- | --- |
+| `user-courses` | **200**，2 门课；字段 `course_name` / `classroom_id` / `course_sign` / `class_start` / `class_end`（毫秒） |
+| `course/chapter?cid&sign` | **200**，6229 B 章节树；节点含 `name` / `leaf_type` / `id` / `start_time` / **`end_time`** / **`score_deadline`** / `leafinfo_id` |
+| `leaf_info` / `user-tasks` / `exercise/list` | 全 404 —— 聚合入口不存在，**章节树是唯一数据源** |
+
+关键词统计（对完整响应文本）：`end_time` × 17、`score_deadline`×17、
+`course_name` × 3、`classroom_id` × 2。
+
+★ **Q2 的答案已经很近**：绝对截止时间字段 `end_time` / `score_deadline`
+确实存在（不是相对「剩余 X 小时」）。但探针只存了每个响应的前 800 字，
+前两个节点都是 `leaf_type=8`（课件）且 `end_time=0`，作业节点在后面被截掉，
+**值是否非零还看不到**。
+
+### 73.2 课堂派（Q1 未通过，跨域路线不通）
+
+`oneline-probe-ketangpai.json`（738 B）：三个 API host
+（`openapiv5` / `52` / `53`）全部 `ERR:TypeError: Failed to fetch`，`tokenFound=false`。
+
+根因判断：从 `www.ketangpai.com` 跨域 fetch 到 `openapiv5*`，带 `token`
+自定义头 + `application/json` → 触发 CORS 预检，服务端不放行；
+页面 localStorage / sessionStorage 里也没有 token。
+**页面内跨域 fetch 对课堂派走不通**，需要换路线。
+
+### 73.3 v2 探针升级（本轮）
+
+| 改动 | 目的 |
+| --- | --- |
+| `sample` 800 → **12000 字** | 完整章节树不再被截断 |
+| 雨课堂 JS 内解析章节树 | 输出 `nodes` / `leafTypeCounts` / `withDeadline`，摘要直接给「节点 N 个 / leaf_type 分布 / 有绝对截止 X 个 / 示例」 |
+| 课堂派补候选请求 | 同源主站 `/CourseApi/*`、无自定义头 `text/plain` 简单请求、旧 `v4` 域（早期纯 Cookie 鉴权）、原三域；每条记失败原因 |
+| 凭证诊断 | 记录 localStorage / sessionStorage / document.cookie 的**键名**，只记名不记值 |
+| 单测 | 补 `12000` / `leafTypeCounts` / `main-semesterList` / `api-simple` / `v4-semesterList` 等断言 |
+
+### 73.4 待办与边界
+
+- 用户两个平台各再点一次「抓作业」→ 取回完整响应：
+  - 雨课堂：`withDeadline` > 0 即 Q2 通过，可以直接定字段映射
+    （`course_name` + 节点 `name` + `end_time` 毫秒）。
+  - 课堂派：看同源 / 简单请求 / v4 哪条能通，再决定是否改走
+    **Kotlin 侧原生 HTTP**（`HttpURLConnection`，不受 CORS 限制，Cookie 由
+    `CookieManager` 提供）。
+- 仍**不落库、不动 Room、不排提醒**；探针只读、不改平台数据。
+
+### 73.5 验证
+
+- `:app:testDebugUnitTest` **409 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**；
+  `adb install -r` **Success**（2026-11-16 00:29:04），仍是 1.0.14 / 48，数据保留。
+- `compileSdk` 临时对齐本机 37 后改回 36，`build.gradle.kts` 零 diff。
+- 四级顺序：复用 `ProbeJs` / `ProbeRunner`；官方 `fetch` 与 `getExternalFilesDir`；
+  开源参考仍只借接口参数；手写部分仍是无 Android 依赖的 JS 生成 + 单测。
+
+---
+
+## §74 第三次探针回收 + 原生 HTTP 路线（2026-11-16 上午）
+
+### 74.1 用户点了「抓作业」，我先把设备上的真实结果取回来
+
+设备 `75HMHEFQMZCQFUBY`（PKB110），09:28 点课堂派、09:31 点雨课堂，
+两个文件都在 `Android/data/com.lirui.oneline/files/` 下：
+
+| 文件 | 大小 | 时间 | 内容 |
+| --- | --- | --- | --- |
+| `oneline-probe-ketangpai.json` | 27159 B | 09:28 | 课堂派 v2 结果 |
+| `oneline-probe-yuketang.json` | 13185 B | 09:31 | 雨课堂 v2 结果 |
+| `oneline-probe.json` | 1032 B | 00:04 | 旧版遗留（首次探针），可删 |
+
+★ **`adb logcat` 里一条可用信息都没有** —— 这不是「没跑」，而是**根本没打日志**：
+`sync/` 包全项目零处 `android.util.Log`（仅 ReminderScheduler / UpdateService /
+UpdateDownloadService / TodoWidgetProvider 有），登录 Dialog 也没挂
+`WebChromeClient.onConsoleMessage`，所以 JS 的报错与 `console.log` 全进不了 logcat。
+**探针内容只存在于那两个 JSON 文件里**，这是本轮补日志（74.2）的直接原因。
+
+### 74.2 本轮做了一件「先修观测能力」的事
+
+| 件 | 改动 |
+| --- | --- |
+| `ProbeRunner.kt` | 打 `TAG=OnelineProbe`：启动（platform/host/url）、完成（state/轮询次数/接口数/落盘/字节数），摘要按行拆开发。`adb logcat -s OnelineProbe:D` 即可看到全过程 |
+| `NativeProbeRunner.kt` | 同样 TAG，每条请求一行 `name method -> status 字节数`，失败记异常类型 |
+
+### 74.3 ★ 课堂派在页面内走不通，改走原生 HTTP
+
+§73 的结论是「跨域 fetch + 自定义头 → CORS 预检失败」。本轮 `adb pull` 回来的
+课堂派结果逐条印证了它，而且给出了**更精确的分界**：
+
+| 请求 | 结果 | 判读 |
+| --- | --- | --- |
+| 同源 `/CourseApi/semesterList` | 200 + 99856 B | **是 SPA 外壳 HTML**（含 `<div id="app">`），不是 JSON —— 主站没有代理 |
+| `openapiv5` + 无自定义头 `text/plain` | **200 + JSON** `{"code":20003,"message":"账号登陆已过期"}` | **CORS 是通的**，只是没带 token |
+| 三个 `openapiv5x` + `token` 头 | `Failed to fetch` | 预检被拒 |
+| 凭证 | cookie 有 **`token`** / `SERVERID`；local 有 `autoLoginRemember` / `userSession` / `userInfo` | token 一直就在 Cookie 里 |
+
+两个结论：
+
+1. **「课堂派完全不通」不成立** —— 通的，只是**带自定义头才触发预检**。
+   上一版探针既只查 localStorage（忽略 Cookie 里的 token），又必然带自定义头，所以每条都判过期。
+2. 即便如此，**页面内仍不是可靠路线**：CORS 放行与否由平台决定，随时可能变。
+   `HttpURLConnection` 跑在 App 自己进程里，**没有同源策略**，能带任意头、
+   也能读 `CookieManager` 里含 HttpOnly 的 Cookie —— 这是本轮新增的主路线。
+
+### 74.4 新增 `NativeProbeSpec` + `NativeProbeRunner`
+
+`NativeProbeSpec` 是**纯函数**（无 Android 依赖，可本地单测），只负责「请求长什么样」：
+
+- `ketangpaiCredential()`：按 `token` → `ketangpai_home_remember` → `userSession(JSON)`
+  顺序取，**只回 tokenFound / source，值不外泄**。
+- `ketangpaiRequests()`：**同一接口、四种凭证传递方式**（header / none / body / query / form），
+  一次跑完就有答案，不用来回改代码发版。
+- `yuketangHeaders()`：`xtbz` 做成参数（`cloud` / `ykt`），`x-client` / `classroom-id` 可选。
+- `encode()`：见 74.6 的坑。
+
+`NativeProbeRunner` 负责发请求与落盘（`oneline-native-<platform>.json`），后台线程跑、
+回调切回主线程（调用方是 Compose，直接改状态才不会崩）。
+
+**边界不变**：只读、不提交、不改平台数据、不落库、不动 Room、不排提醒。
+结果文件里 `token=` 一律打码，日志只记「找到/没找到」。
+
+### 74.5 雨课堂：调研订正了两处认知
+
+按 AGENTS.md §2 第 3 级做了开源实现调研（`heyblackC/yuketangHelper`、
+`aglorice/Raincourse`、`Zachary709/YuKeTang` 等），并做了路由存在性实测
+（用「nginx 404 HTML」vs「业务 JSON」区分「路由不存在」与「未登录」）。三条硬结论：
+
+1. **不存在「作业列表」接口**。扫了 66 个候选路由名全 404。
+   作业/考试**只能从章节树按 `leaf_type` 筛**：
+   `0=视频 3=公告 4=讨论 5=考试 6=作业`（两份独立源码互证）。
+   → 上一轮把 `user-tasks` / `exercise/list` 当聚合入口是错的，删掉。
+2. **`leaf_info` 必须是两段数字 + 末尾斜杠**：`/leaf_info/<cid>/<leaf_id>/`。
+   §73 试的单段 `/leaf_info/<cid>/` 是**路由错**（nginx 404），不是缺参数。
+3. **截止时间 `score_deadline` 是 Unix 毫秒，`0` 表示「无限制」**。
+   详情里另有 `content.score_d`（毫秒，`null` = 不可用）。
+   ★ 直接把 0 当时间戳会渲染成 **1970 年** —— 这是最容易写进待办的一个脏数据。
+
+顺带发现两个易错点，都已落进代码：
+
+- `section_leaf_list[]` 里的节点**可能带嵌套 `leaf_list`**，只处理顶层会漏掉一半作业节点。
+- `xtbz` 不只有 `cloud`，`ykt` + `x-client: web` 是另一派主流写法。
+
+### 74.6 单测逮到的真 bug
+
+`encode()` 原本写 `ch.isLetterOrDigit()` 做白名单 —— 那个**对中文也返回 true**，
+`encode("作业")` 会原样吐出裸中文，拼进 query 就是非法 URL。改成显式 ASCII 判断。
+这条是 `NativeProbeSpecTest` 的断言逼出来的，不是事后发现。
+
+### 74.7 边界与待办
+
+- 仍**不落库、不动 Room、不排提醒**，`SyncEngine` 保持骨架。
+- 下一步（等用户重跑）：两个平台各点一次「抓作业」→ 取回
+  `oneline-native-*.json`：
+  - 课堂派：看 `workingTokenMode` 是哪条通、`courseId` 有没有拿到、作业/考试接口是否回数据。
+  - 雨课堂：看两门课的 `homeworkCount` / `examCount` 是否非零、`withDeadline` 是否 > 0。
+    若两门课都只有 `leaf_type=8`，说明作业不在章节树里，得另找入口 —— 这会改字段映射设计。
+- 探针查出的 `leaf_type_id` / `sku_id` 还没回填到题目接口调用（当前用节点 id 先试）。
+
+### 74.8 验证
+
+- `:app:testDebugUnitTest` **430 条 / 0 失败**（新增 `NativeProbeSpecTest` 13 条 +
+  `YuketangRulesTest` 8 条）；`:app:assembleRelease` **BUILD SUCCESSFUL**；
+  `adb install -r` **Success**（2026-11-16 10:01:43），仍是 1.0.14 / 48，数据保留。
+- 签名 SHA-256 `c0847ef1…2548` 与机上完全一致，覆盖安装不需要卸载。
+- `compileSdk` 临时对齐本机 37 跑测试，**改回 36 后重新打 release 包**，
+  `app/build.gradle.kts` 零 diff（中途 `Set-Content` 曾把整个文件换行符改成 CRLF
+  产生 255 行伪 diff，已 `git checkout` 恢复）。
+- 四级顺序：复用 `ProbeJs` / `ProbeRunner` / `SyncCredentialStore` / `SyncRules`；
+  官方 `HttpURLConnection` / `CookieManager` / `Handler` / `getExternalFilesDir`；
+  开源参考只借接口路径与字段名（`yuketangHelper`、`Raincourse`、`YuKeTang`），不引依赖；
+  手写部分抽成无 Android 依赖的 `NativeProbeSpec` + 单测。
+- ★ 教训记录：Kotlin **块注释支持嵌套**，注释里写 `/CourseApi/*` 的 `/*` 会开启嵌套注释，
+  导致「Unclosed comment」编译错。写路径通配时别用 `/*`。
+
+---
+
+## §75 第四次探针回收：课堂派打通，雨课堂确认无作业（2026-11-16 上午）
+
+### 75.1 两句话结论
+
+1. **课堂派彻底通了** —— 课程 5 门、`api-headerToken` 返回 5 门课的完整列表。
+   但我的解析写错了（见 75.2），作业接口一个都没打到。
+2. **雨课堂这个账号真的没有作业** —— 两门课 17 个节点**全是 `leaf_type=8`（课件）**，
+   第二门课 `青马学堂` 的 `course_chapter` 干脆是**空数组**。
+
+### 75.2 ★ 课堂派：鉴权全对，解析全错
+
+真机四条传递方式的实测结果（`semesterList`）：
+
+| 方式 | 结果 | 判定 |
+| --- | --- | --- |
+| `header`（`token` 头） | **200 + code 10000「访问成功」+ 4897 B** | ✅ **可用** |
+| `query`（`?token=`） | 200 + 10000 + 4897 B | ✅ 可用（但 token 进 URL，不作首选） |
+| `form`（表单编码） | 200 + 10000 + 4897 B | ✅ 可用 |
+| `body`（token 进 JSON） | 200 + **20003「账号登陆已过期」** | ❌ 不认 |
+
+★ 这条**彻底推翻**了 §73「课堂派完全不通」的判断：不是不通，是**带自定义头触发 CORS 预检**。
+原生 `HttpURLConnection` 一上，header 方式直接通过。
+
+**但我自己的解析器写错了**，两个错叠在一起：
+
+| 错误假设 | 真实结构 |
+| --- | --- |
+| `data` 是数组，课程在 `data[]` | `data` 是**对象**，课程在 **`data.topcourses[]`** |
+| 课程 `id` 是数字 | 是**字符串**（`MDAwMDAwMDAwMLOcuZmG37NshqVyoQ`，Base64 风格） |
+
+后果：`parseKetangpaiCourseId()` 按「找 `data` → 找 `[` → 扫数字」实现，
+扫到的 `[` 其实是 `topcourses` 的数组，然后数字扫描遇到引号直接失败 → `courseId` 永远空 →
+**作业接口一次都没发出**，而摘要里却显示「鉴权成功」。
+
+现在改成 org.json 正规解析（`parseKetangpaiCourses`），并**对每门课都取作业/考试**
+（上一版只取第一门）。★ 这是「只看 HTTP 状态码就当成功」的经典教训 ——
+状态 200 + code 10000 也不代表后面的链路走通了。
+
+### 75.3 ★ 安全隐患：页面内探针把 token 明文写进了 /sdcard
+
+`oneline-probe-ketangpai.json` 里出现了**完整的 64 位 token 明文**：
+
+```
+url=https://openapiv5.ketangpai.com/CourseApi/semesterList?token=893639c5...e52a3d4d
+```
+
+原因：页面内探针的 `push()` 把**原始 url** 存进结果，而结果文件落在
+`/sdcard/Android/data/...`（其他 App 可读）。原生侧我早就做了 `sanitizeUrl` 打码，
+**页面内那条漏了**。token 等同登录凭证，泄露即可冒充。
+
+处理：
+
+- `ProbeJs.kt` 新增 `maskUrl()`，`push()` 与 `catch` 分支一律经由它；
+  同时打码 `token=` 与 URL 编码后的 `token%3D`。
+- 单测钉住：`assertTrue(js.contains("url:maskUrl(url)"))`、
+  `assertFalse(js.contains("url:String(url).slice"))`。
+- **已删除**设备上与本地所有含明文 token 的旧探针文件（两份 `oneline-probe-*` 与遗留的
+  `oneline-probe.json`），避免继续留在存储卡上。
+
+### 75.4 雨课堂：Leaf 全是课件，但要区分「没作业」与「作业在往期」
+
+`leaf_info` 这一次**通了**（200 + 1178 B），印证 §74 调研的「两段数字 + 末尾斜杠」是对的。
+`xtbz: cloud` / `ykt` 两种头**都返回一样的内容**，说明这个接口不挑 xtbz。
+
+真实 `leaf_info` 结构（关键字段）：
+
+| 字段 | 值 | 说明 |
+| --- | --- | --- |
+| `data.leaf_type` | `8` | 课件 |
+| `data.score_deadline` | **`0`** | ★ 0 = 无限制，不是 1970 |
+| `data.sku_id` | `15439133` | |
+| `data.content_info.leaf_type_id` | `1716265628358151936` | ★ 题目接口要的是**这个**，不是节点 `id` |
+
+★ 上一版拿**节点 id**（`84646252`）去打 `get_exercise_list`，服务端回
+`{"msg":"No permissions","error_code":20009}` ——
+**是 id 用错了，不是没权限**。已改为从 `leaf_info` 回填 `content_info.leaf_type_id`。
+
+**当前结论**：`term=latest` 下两门课共 17 节点全是课件、`青马学堂` 章节树为空、
+`schedule` 接口只回 `leaf_schedules`（纯数字数组，无截止时间）。
+所以「这个账号在雨课堂没有作业」基本成立 —— 但还有**一个变量没排除**：
+`term=latest` 只取最新学期，作业可能在往期学期。本轮已补 `term=all` / 不带 `term`
+两个变体去验证，结果待下一轮。
+
+### 75.5 验证
+
+- `:app:testDebugUnitTest` **437 条 / 0 失败**
+  （新增 `KetangpaiParsingTest` 6 条 + `ProbeJsTest` 加 1 条 token 打码断言）。
+- `:app:assembleRelease` **BUILD SUCCESSFUL**；`adb install -r` **Success**
+  （2026-11-16 10:11:18），仍是 1.0.14 / 48，数据保留。
+- `app/build.gradle.kts` 零 diff（测试时临时对齐 37，打正式包前已 `git checkout` 恢复）。
+- 四级顺序：复用 `NativeProbeSpec` / `NativeProbeRunner` / `ProbeJs`；
+  官方 `HttpURLConnection` / `JSONObject`；开源参考仍只借接口路径；
+  手写部分仍是纯函数 + 单测。
+
+### 75.6 下一轮要答的问题
+
+1. 课堂派 5 门课的 `homework` / `exam` 接口返回什么（字段名、是否含 `endtime`、单位）。
+   `FutureV2/CourseMeans/getCourseContent` 用的是课程 `id`（字符串），
+   与 `semesterList` 返回的一致，理论上能直接接上。
+2. 雨课堂 `term=all` 里有没有往期作业。
+3. 若雨课堂确认彻底没作业，就**只做课堂派**（它已经通了），
+   雨课堂退成「仅登录、不抓取」，别为了对称把功能做坏。
+
+---
+
+## §76 ★ 根因找到：雨课堂用错了接口（2026-11-16 上午）
+
+### 76.1 用户的关键反馈
+
+> 「雨课堂昨天不是能抓到吗？实际上雨课堂里面的科目更多。课堂派里面的科目只有一科是本学期的。」
+
+三句话都推动了进展，逐条纠正：
+
+1. **「雨课堂能抓到吗」** —— 不能。§71–§73 那几轮**从没抓到过任何作业**，
+   当时试的 `user-tasks` / `exercise/list` 是接口不存在（404），不是抓取失败。
+   「登录成功」是另一件事，别记混。
+2. **「科目更多」** —— ★ **这条是根因**。界面上的课程明显多于接口返回的 2 门，
+   说明我们**看错了数据源**（见 76.2）。
+3. **「课堂派只有一科是本学期」** —— 查了，5 门课返回的 `semester=2025-2026, term=2`
+   **全都一样**，都是本学期。但用户的提醒本身是对的：判「本学期」要看
+   `semester` + `term` 字段，不能靠课程名猜。
+
+### 76.2 ★ 根因：`user-courses` 根本不是雨课堂的课程列表
+
+`mooc-api/v1/lms/user/user-courses/` 是**学堂在线 MOOC 的选课接口**，
+不是雨课堂课堂端（classroom）的课程列表。铁证：它回的 `product_list` / `course_sign` /
+`sku_id` 全是学堂在线的**商品术语**，与 `next.xuetangx.com/api/v1/lms/get_product_list/` 同源。
+
+**它只返回你在学堂在线「选过的 MOOC 课」** —— 所以永远只有 2 门，
+而你在雨课堂里正常上课的那些课**根本不在这个接口里**。
+
+真正在用的是**两个接口相加**：
+
+```
+GET /v2/api/web/courses/list?identity=2      ← 未归档（identity=2 是学生视角）
+GET /v2/api/web/classroom_archive            ← 已归档 / 已结课
+```
+
+`physicsdolphin/rainclassroom-scrapper` 源码写得很直白：
+
+```python
+courses = shown_courses['data']['list'] + hidden_courses['data']['classrooms']
+```
+
+注意归档接口的数组在 **`data.classrooms[]`**，主键叫 **`id`** 而不是 `classroom_id`。
+
+**判读技巧**：`/v2/api/web/` 系列回 **401 = 有路由但缺登录**，**404 才是路径错**。
+这个区分是本次定位能成立的前提。
+
+### 76.3 顺着这条线还澄清了一批参数
+
+| 项 | 结论 |
+| --- | --- |
+| `term=all` | **不是合法值**。合法是 `latest` 或数字学期（`202401`）。这解释了 §75「all/latest/不带 三者一样」—— 非法值被忽略、回落到默认，不是「作业不在往期」 |
+| `status` | 只有 `status=1` 有实际使用证据，语义「进行中」；0/2/3 未找到证据 |
+| `role=5` | 是**返回字段**（学生），不是入参；入参是 `identity=2` |
+| `uv_id` | 就是 `university_id`，真实存在 |
+| `xtbz` | `ykt` 与 `cloud` **不等价**；错误码 80005 的官方处置建议是「把 cloud 换成 ykt」。课堂端 `/v2/api/web/` 用 `ykt` |
+
+★ 教训：**「参数都试一遍」救不了「接口选错了」**。
+§75 我试了 `term=all` / 不带 `term`，看到三者相同就下了「往期学期也没作业」的结论 ——
+而真相是这个接口压根不该用来数课程。**先确认数据源对不对，再调参数。**
+
+### 76.4 课堂派：数据完全可用（这次是真的通到底）
+
+5 门课逐个打了 `getCourseContent`，`contenttype=4`（作业）/ `6`（考试），全部 200：
+
+| 课程 | 作业 | 考试 |
+| --- | --- | --- |
+| 模拟电路 | **10** | 0 |
+| AI+口译Wed | **17** | 0 |
+| 大学物理（理）下 | **15** | **2** |
+| 2026春-线性代数 | **10** | **2** |
+| 思想道德与法治 | 0 | 0 |
+
+字段质量（正好是待办要的三个）：
+
+```
+title      = "模拟电路第十次作业"
+endtime    = 1782274380 → 2026-06-24 12:13:00    Unix 秒
+begintime  = 1782180900 → 2026-06-23 10:15:00    考试开始
+timelength = 2400                                 考试时长（秒）
+publishtype= 2 → 考试
+```
+
+★ 观察到一个**要在映射时当心**的现象：多条 `endtime` 落在 `00:23` / `00:53` / `00:31`。
+这通常是老师把截止设为「当天 23:59」而平台按次日 0 点存，也可能是平台自身的时区处理。
+落到待办时应**按日期取当天结束**，不要显示成凌晨，否则用户会以为「半夜截止」。
+
+### 76.5 本轮代码改动
+
+| 文件 | 改动 |
+| --- | --- |
+| `NativeProbeSpec` | 新增 `yuketangCourseListRequests`（课堂端两接口 + MOOC 对照）、`yuketangCourseDetailRequests`（课程详情 / 活动时间轴）、`yuketangUserInfoRequests`、`yuketangC27ProgressRequest`；课堂端统一 `xtbz=ykt` + `x-client` |
+| `NativeProbeRunner` | 课程池改为「课堂端两接口合并 + 按 classroom_id 去重」；新增 `parseWebCourses`（兼容 `data.list` / `data.classrooms` 与 `id` / `classroom_id` 两种主键）；摘要分开报「课程来源」 |
+| `SourceHygieneTest` | ★ 新增：扫描块注释深度，防「注释里写斜杠加星号」导致的嵌套（本项目已栽三次） |
+
+### 76.6 验证
+
+- `:app:testDebugUnitTest` **441 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**；
+  `adb install -r` **Success**（2026-11-16 10:28:34），仍是 1.0.14 / 48，数据保留。
+- 探针输出已确认**无 token 明文**（4 个文件均 0 处；打码处 1 处），§75 的修复生效。
+- `app/build.gradle.kts` 零 diff。
+
+### 76.7 待验证
+
+用户再点一次「抓作业」，看 `courseSourceCounts`：
+- `courses-v2-identity2` 与 `courses-archive` 各几门 —— 加起来应等于界面上的课程数。
+- 若课堂端课程数 > 2，则雨课堂的章节树终于能覆盖到真正在上的课，`leaf_type=6/5` 才有机会出现。
+
+---
+
+## §77 学期错位 + 雨课堂页面塌陷（2026-11-16 上午）
+
+### 77.1 用户指出两个新问题
+
+> 「你说的这些都是上学期的了，这学期是复变函数和数学物理方法……现在下半年，是 26-27 的上学期。」
+> 「雨课堂登录进去之后，『我教的课』『我听的课』下面紧接着直接就是导航栏『课程、发现、ai、消息、我的』。
+>  理论上下面应该接着一个可以上下滑动的课程浏览界面啊。是不是我们这个地方出问题？」
+
+两条都成立，而且是**两个互不相关的 bug**。
+
+### 77.2 ★ 学期错位：抓到的全是上学期
+
+今天 2026-11-16，属于 **2026-2027 学年第一学期（秋季）**。
+而课堂派 `semesterList` 回的 5 门课**全部**是 `semester="2025-2026", term="2"`（上学期春季）：
+
+```
+模拟电路       2025-2026 / 2
+AI+口译Wed    2025-2026 / 2
+大学物理（理）下 2025-2026 / 2
+2026春-线性代数  2025-2026 / 2
+思想道德与法治   2025-2026 / 2
+```
+
+用户本学期的「复变函数」「数学物理方法」**一门都没出现**。
+更可疑的是 `data.semester` 返回**空数组** `[]` —— 它本应是「可切换的学期列表」。
+
+所以之前的「课堂派完全通了」是**过度结论**：接口通了、数据结构对了，
+但**数据不是当前学期的**，直接落库就会把上学期的作业塞进待办。
+
+★ 教训：**「拿到数据」不等于「拿到对的数据」**。落库前必须校验学期。
+
+本轮已加 `ketangpaiSemesterRequests`，把学期筛选的写法全试一遍：
+显式传 `semester=2026-2027&term=1`、切 `isstudy`、`semesterCourseList` 入口、
+以及几个候选的学期列表接口（`semesterAll` / `getSemester` / `semester`）。
+结果等用户下一轮跑出来看。
+
+### 77.3 ★ 雨课堂页面塌陷：是我注入的 CSS 干的
+
+用户描述「课程区没了、直接接导航栏」——**这个现象是我造成的**。
+
+旧版 `SCROLL_FIX_JS`（§70.10 引入）干了这些事：
+
+```js
+html.style.height = 'auto';  body.style.height = 'auto';
+html.style.overflowY = 'auto'; body.style.overflowY = 'auto';
+body.style.paddingTop = '56px';
+```
+
+两个问题：
+
+1. **把 SPA 的内部滚动区顶塌了**。雨课堂是 Vue 应用，布局依赖
+   「外层固定高度 + 内部容器滚动」。把 `html` / `body` 改成 `height:auto` 后，
+   内层失去高度约束 → 那个本该可滑动的课程区**高度塌成 0**，
+   肉眼看到的就是「我教的课 / 我听的课」下面直接接导航栏。
+2. `paddingTop: 56px` 是当年为躲系统状态栏加的，**后来已从布局层用
+   `statusBarsPadding()` 解决**，这一行纯属多余副作用，还平白把页面往下推 56px。
+
+现在改成**最小侵入**：只给 `body` 补底部留白（防止被我们的底部按钮条挡住），
+**不再碰 `height` / `overflow`**。
+
+★ 教训：**为修一个布局问题而全局改 `html`/`body` 的 `height`/`overflow`，
+代价往往是毁掉站点自己的滚动容器。** 这类"万能布局补丁"要极其克制。
+
+### 77.4 顺手修的两处
+
+| 问题 | 修法 |
+| --- | --- |
+| WebView **没设 UserAgent** | 默认 UA 带 `; wv` 标记，不少站点据此判定「内嵌浏览器」并给不同布局。改成去掉该标记（不伪装机型，页面仍是平台官方页） |
+| 探针只能在登录页跑 | DOM 体检拿不到「我教的课」等真实内容。底部加「课程页」按钮，让用户先导航过去再抓 |
+
+### 77.5 新增 DOM 体检
+
+雨课堂 JS 探针现在会顺带报告页面自身状态，用来区分「接口错」与「页面没渲染」：
+
+```
+domUrl / domTitle / domUa / domBodyLen
+domKeywords   复变函数✓ 数学物理方法✗ 我教的课✓ 我听的课✓ ...
+domCardCount  疑似课程卡片节点数
+domCardNames  卡片里的课程名
+domSnippet    正文前 600 字
+```
+
+判读方式很直接：
+- **DOM 里有「复变函数」而接口没有** → 接口选错，继续换接口。
+- **两边都没有** → 页面根本没加载出课程区（可能还是布局问题，或登录态没生效）。
+
+### 77.6 验证
+
+- `:app:testDebugUnitTest` **441 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**；
+  `adb install -r` **Success**（2026-11-16 10:38）。
+- `app/build.gradle.kts` 零 diff（临时对齐 37 跑测试，打包前已恢复 36）。
+
+---
+
+## §78 ★★ 真根因：`isstudy` 是页签映射，学生是 "1" 不是 "0"（2026-11-16）
+
+### 78.1 怎么找到的
+
+用户反复说「本学期的课是复变函数和数学物理方法」「这些全是上学期的」，
+但我们**试遍了参数组合也拿不到**。于是放弃「调参数」，改为去读**课堂派自己的前端代码**。
+
+关键突破来自课堂派 H5 线上 bundle（`w.ketangpai.com/js/app.*.js`，约 1 MB）。
+这是比任何开源项目都权威的一手证据 —— 平台自己怎么发请求，代码里写得明明白白。
+
+### 78.2 ★ 真因一：`isstudy` 不是布尔开关，是三个页签的映射值
+
+bundle 原文（`getCourseList`）：
+
+```js
+let t = { isstudy: "1"===this.isstudyTbs ? "0" : "2"===this.isstudyTbs ? "2" : "1",
+          search: e||"" };
+```
+
+页签定义：
+
+```js
+"0"===userInfo.usertype ? [我学的(name:"0"), 我协助的(name:"2")] : ...
+```
+
+`isstudyTbs` 初值 = `userInfo.usertype`。于是：
+
+| UI 页签 | `isstudyTbs` | 发给后端的 `isstudy` |
+| --- | --- | --- |
+| 我教的（教师） | `"1"` | **`"0"`** |
+| 我协助的（助教） | `"2"` | `"2"` |
+| **我学的（学生）** | `"0"` | **`"1"`** |
+
+**★ 学生对应的是 `"1"`，教师才是 `"0"` —— 和直觉正好相反。**
+而我们全链路写死 `"0"`，等于一直在按「我教的」页签查课程。
+
+后果链完全对上：
+
+```
+isstudy="0"（教师页签）
+  → topcourses 还能容错回 5 门（所以看起来"通了"）
+  → data.semester 永远是空数组  ← 学生没有"我教的课程"
+  → number=0
+  → 按学期取明细拿不到本学期
+  → 「复变函数」「数学物理方法」永不出现
+```
+
+### 78.3 ★ 真因二：`topcourses` 只是「置顶课程」，不是全部
+
+bundle 里两者分别渲染：`topCourseList` 是「置顶课程」区块，
+`semesterList` 是按学期分组的课程折叠面板，前端再逐个学期调 `semesterCourseList` 取明细。
+
+我们只读了 `topcourses` —— 而且它每项都带 `isTop:1`，这个字段名早就提示了它是置顶区，
+我当时没在意。**本学期的课很可能压根不在置顶区里。**
+
+### 78.4 顺带澄清的命名空间问题
+
+```js
+() => "/courseApi/simpleLists"           // 学生课程精简列表（小写 c）
+e  => "/courseApi/semesterList", e       // H5 首页入口（小写 c）
+e  => "/CourseApi/semesterCourseList", e // 按学期取明细（大写 C）
+```
+
+小写 `courseApi` 与大写 `CourseApi` 是**两个命名空间**。
+以及 `reqtimestamp`（毫秒）是平台 axios 拦截器**每次都自动注入**的。
+
+### 78.5 本轮改动
+
+| 件 | 改动 |
+| --- | --- |
+| `SEMESTER_LIST_BODY` | `isstudy` 从 `"0"` 改成 **`ISSTUDY_STUDENT = "1"`** 常量，一处定义、全链路生效 |
+| `ketangpaiSemesterRequests` | 重写：R1 学生页签优先 / R2 助教 / R3 教师（对照）/ `simpleLists` / `semesterCourseList` 的 all + 2026-2027-1 + 2026-2027-2 + 2025-2026-2 / `ArchiveApi/lists`；全部带 `reqtimestamp` |
+| `parseKetangpaiCourses` | **同时读 `topcourses` 与 `semester[]`**，按 id 去重 —— 这是「只看到 5 门」的直接修复 |
+| `parseKetangpaiSemesterGroups` | 新增：解析 `semester[]` 的学期分组，用来判断「本学期是否存在」 |
+| 摘要 | 增加「学期分组（N）」一行；分组为空时明确提示「isstudy 页签或账号无本学期课」 |
+| `KetangpaiIsstudyTest` | 6 条断言钉住：学生页签必须是 `"1"`、**绝不能再写回 `"0"`**、教师页签保留做对照、要查全部学期与本学期、每条都带 `reqtimestamp`、`simpleLists` 用小写命名空间 |
+
+### 78.6 验证
+
+- `:app:testDebugUnitTest` **447 条 / 0 失败**（新增 `KetangpaiIsstudyTest` 6 条）；
+  `:app:assembleRelease` **BUILD SUCCESSFUL**；`adb install -r` **Success**。
+- `app/build.gradle.kts` 零 diff。
+
+### 78.7 ★ 三条方法论教训
+
+1. **「参数都试一遍」救不了「页签/命名空间选错」。**
+   `isstudy` 看起来是布尔量，实际是枚举映射 —— 光看字段名猜语义，会一直错下去。
+2. **拿不到数据时，去读平台自己的前端代码。** 这一轮 4 次调研里，
+   只有这次直接读 bundle 的思路一击命中。开源项目是二手、可能过期；
+   bundle 是平台此刻正在跑的代码。
+3. **`isTop:1` 这种字段名早就提示了 `topcourses` 是置顶区**，
+   我当时看到了却没追问「那非置顶的在哪」。
+   **字段名里的 `top` / `total` / `number` 这类词要看懂。**
+
+### 78.8 待验证
+
+用户再点一次「抓作业」，重点看三行：
+- `semesterGroups` 是否非空 —— 非空说明 `isstudy="1"` 生效了；
+- 分组里有没有 `2026-2027/1`；
+- 课程池里有没有「复变函数」「数学物理方法」。
+
+---
+
+## §79 ★ 拿到本学期课程了 + 雨课堂改移动版（2026-11-16）
+
+### 79.1 用户的两个关键观察
+
+> 1「课堂派的问题应该是它只能去读取我置顶的课程，我刚刚将复变函数置顶了，现在好像能读取了，
+>   但是取消置顶现在还是只能读取到我上个学期置顶的课程。」
+> 2「现在雨课堂点进去是空白的界面，然后我点击重登。然后又回去原来昨天已经修过的 bug 上面，
+>   就是这个登录二维码只能显示一半。」
+
+两条都是**准确的诊断**，第 1 条尤其关键 —— 它直接指明了 `topcourses` 就是置顶区。
+
+### 79.2 ★ 课堂派：真拿到本学期课了
+
+按 §78 的修正（`isstudy="1"` + 读 `semester[]`）跑出来，学期分组终于出现了：
+
+```
+2026-2027/1 第一学期     ← 本学期！
+2025-2026/2 第二学期
+2025-2026/1 第一学期
+```
+
+再按学期取明细，`semesterCourseList` 拿到了：
+
+```json
+{"coursename":"微电班复变函数与数学物理方法","semester":"2026-2027","term":"1","isTop":0}
+```
+
+**这就是用户说的那门本学期课。** 而它 `isTop: 0` ——
+**不在 `topcourses`（置顶区）里**，这正好印证用户第 1 条观察。
+
+### 79.3 ★ 为什么「返回 200、1138 字节」却被算成 0 门
+
+`semesterCourseList` 与 `semesterList` 的 `data` **结构不同**：
+
+| 接口 | `data` 形态 | 课程位置 |
+| --- | --- | --- |
+| `semesterList` | **对象** | `data.topcourses[]` |
+| `semesterCourseList` | **数组** | `data[]` 直接是课程 |
+
+我一开始两个都用 `parseKetangpaiCourses`（按对象解析），于是对 `semesterCourseList` 永远得到 0。
+新增 `parseSemesterCourseList` 专管数组形态。
+
+★ 教训：**同一个平台、相邻的两个接口，`data` 形态可能完全不同。**
+不能因为「名字像」就复用同一个解析器。
+
+### 79.4 ★ 还有一个隐藏的截断 bug
+
+同时发现雨课堂 `/v2/api/web/courses/list` 实测 **24494 B**，而 `SAMPLE_CHARS` 是 12000
+→ 样本被截断 → JSON 不完整 → 解析抛「Unterminated string」→ 课程数算成 0。
+
+**「接口 200、长度也不小、但解析出 0 条」就是这么来的**，只看状态码完全发现不了。
+`SAMPLE_CHARS` 已放宽到 40000。
+
+### 79.5 ★ 雨课堂：页面其实一直是好的，是我的注入在捣乱
+
+页面内探针的 DOM 体检给出了决定性证据（走 `/m/v2` 移动版时）：
+
+```
+domUrl   = https://www.yuketang.cn/m/v2
+domBody  = 1063 字 / 课程卡片 195 个
+关键词   复变函数✓ 数学物理方法✓ 我教的课✓ 我听的课✓ 学期✓
+正文     … 量子力学与固体物理 / 复变函数与数学物理方法 / 电子电路实习 /
+         信号与系统 / 马克思主义基本原理 / 体育 …（全是 2026秋 的课）
+```
+
+**页面完全正常，课程全在。** 所以问题不在平台、不在登录态，而在我们对页面的干预。
+
+两次注入的账：
+
+| 版本 | 注入内容 | 后果 |
+| --- | --- | --- |
+| §70.10 | `html`/`body` 的 `height:auto` + `overflowY:auto` + `paddingTop:56px` | Vue SPA 内部滚动容器顶塌 → 课程区高度 0 |
+| §77 | 只加 `body { paddingBottom: 72px }` | 用户反馈「点进去是空白」—— `/m/v2` 是 flex 铺满视口的移动版，改 padding 同样破坏盒模型 |
+
+**结论：彻底不注入任何 CSS。** 平台自己的移动版页面本来就能正常滚动、正常铺满；
+「别被我们底部按钮条挡住」这件事在**原生布局层**解决，不该改平台页面样式。
+
+### 79.6 ★ 登录页改走移动版
+
+`loginPath` 从 `/web?type=3`（PC 版）改成 **`/m/v2`（移动版）**。
+
+这是「二维码只显示一半」的**根因**：PC 版页面是给宽屏设计的，在手机上必然被裁。
+之前两轮都在用 CSS 去「修」一个**根本不该打开 PC 版页面**的问题，越修越坏。
+
+移动版的好处：
+- 进入即是课程列表（不再需要「课程页」按钮去导航）
+- 二维码/登录 UI 天然适配手机
+- 无需任何样式注入
+
+`SCROLL_FIX_JS` 保留为空串（不执行），调用点改为 `applyLayoutFix()`，避免将来又被塞东西进去。
+
+### 79.7 本轮改动清单
+
+| 件 | 改动 |
+| --- | --- |
+| `SyncContract.YUKETANG.loginPath` | `/web?type=3` → **`/m/v2`** |
+| `HomeworkSyncLoginDialog` | `SCROLL_FIX_JS` 清空；所有 CSS 注入移除 |
+| `NativeProbeRunner.SAMPLE_CHARS` | 12000 → **40000**（修截断导致解析 0 条） |
+| `parseSemesterCourseList` | 新增，专解析 `data` 为数组的形态 |
+| `parseWebCourses` | 按实测结构校准：`data.list` / `data.classrooms`、`classroom_id` vs `id`、课程名在 `course.name` |
+| `termLabel` | 数字学期（`202502`）→ 可读标签（`2025-2026/2`） |
+| `currentSemesterCandidates` | 按日期算当前学期，**不依赖 `semester[0]` 顺序**（调研指出该顺序无代码保证） |
+| 课程池 | 改以 `semesterCourseList` 为准；`topcourses` 只留作「置顶课程」对照 |
+| `KetangpaiSemesterCourseTest` | 新增 6 条：data 是数组 / 学期课 `isTop:0` / 空学期 / 学期判定（11月·3月·9月·2月）/ 候选回退 / term 标签 |
+| `SyncRulesTest` | 原来钉的 `/web?type=3` 改为 `/m/v2` |
+
+### 79.8 验证
+
+- `:app:testDebugUnitTest` **453 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**；
+  `adb install -r` **Success**。
+- `app/build.gradle.kts` 零 diff。
+
+### 79.9 ★ 四条教训
+
+1. **用户的一句「是不是只能读置顶的」比 4 次调研都准。** 用户能看到真实界面，
+   他们描述的现象就是最好的线索。
+2. **「接口 200 + 长度不小 + 解析 0 条」几乎一定是结构假设错或样本被截断**，
+   这两种都要单独怀疑。
+3. **不要在别人的 SPA 上改全局布局。** 两次注入、两次踩塌。
+   平台有移动版就用移动版，不要拿 PC 版加补丁。
+4. **`semester[0]` 这种「前端惯例」不能当契约**，要按日期自己算当前学期。
+
+---
+
+## §80 ★ 课堂派全线打通；雨课堂二维码的真根因是缩放策略（2026-11-16）
+
+### 80.1 课堂派：本学期的作业拿到了
+
+`isstudy="1"` + `semesterCourseList` 两处修正生效后，7 门课全部到位：
+
+```
+微电班复变函数与数学物理方法 / 2026-2027/1   ← 本学期
+模拟电路 / AI+口译Wed / 大学物理（理）下 / 2026春-线性代数 / 思想道德与法治  / 2025-2026/2
+大学物理（理）上 / 2025-2026/1
+```
+
+`currentSemesterGuess = 2026-2027/1`（按日期自己算的），与真实学期一致。
+
+**本学期那门课有 14 条作业**，其中 2 条未过期：
+
+| 作业 | 截止 |
+| --- | --- |
+| 5.3 Delta函数 | 2026-11-19 00:00 |
+| 5.2 傅里叶积分与傅里叶变换 | 2026-11-17 00:00 |
+| 5.1 傅里叶级数 | 2026-11-11 23:59（已过期） |
+
+★ 顺带否掉了 §76 的一个担心：`endtime` 是干净的 `23:59` 边界，
+**不是**之前看到的 `00:23` / `00:53` 那种疑似错位值。上学期那几门课的
+`00:23` 只是老师自己设的时间，不是平台 bug。
+
+对照：`模拟电路`（上学期）10 条作业全在 2026-03 ~ 06，已全部过期 ——
+这正是「必须按学期过滤」的实证。
+
+### 80.2 ★ 雨课堂二维码：真根因是 `loadWithOverviewMode = false`
+
+上一版把 `loginPath` 改成 `/m/v2` 是**错误假设**。实测未登录时：
+
+```
+请求 /m/v2  →  302  →  https://www.yuketang.cn/web/?next=/m/v2&type=3
+```
+
+**服务端直接把未登录用户弹回 PC 登录页**，换入口绕不开，只是多一跳。
+`loginPath` 已改回明确的 `/web?type=3`。
+
+真正的根因在 WebView 配置：
+
+```kotlin
+settings.useWideViewPort = true
+// 上一版注释写着"不设 loadWithOverviewMode：它会把 PC 页缩到一屏宽"
+```
+
+`useWideViewPort = true` 让网页按**桌面宽度（约 980px）**排版，
+而手机物理宽度只有 ~400dp。**再关掉 overview 模式**，就是
+「按 980px 布局、塞进 400dp 视口」→ 右侧内容被裁，二维码正好在中间偏右，
+于是只剩一半。
+
+★ 讽刺的是 §70.10 的注释把原因写得很清楚：「它会把 PC 版登录页整体缩到一屏宽」。
+**但对「看完整二维码」这个需求，缩到一屏宽恰恰是我们要的。**
+当时为了「不让页面变小」拒绝了 overview，结果换来裁切。
+
+现在：`useWideViewPort = true` + **`loadWithOverviewMode = true`**，
+整页缩进一屏，二维码完整可见，仍可双指放大。
+
+### 80.3 一处保留：登录后仍能进移动版课程页
+
+未登录时 `/m/v2` 会跳走，但**登录之后**它就是平台自己的移动版首页（含全部课程）。
+底部「课程页」按钮已在登录后导航到 `$base/m/v2`，方便抓取时 DOM 体检看到真实课程。
+
+### 80.4 本轮改动
+
+| 件 | 改动 |
+| --- | --- |
+| `HomeworkSyncLoginDialog` | **`loadWithOverviewMode = true`**（二维码修复核心）；「课程页」按钮登录后跳 `/m/v2` |
+| `SyncContract.YUKETANG.loginPath` | 回到 `/web?type=3`，并把「为什么 /m/v2 不行」写进注释 |
+| `SyncRulesTest` | 断言改回 `/web?type=3`，并写明真正的修复点在缩放策略而非入口 |
+| `KetangpaiHomeworkContractTest` | 新增 5 条：标题+绝对时间、`0` 不是 1970、空作业、考试 `begintime`+`timelength`、**按 endtime 区分学期** |
+
+### 80.5 验证
+
+- `:app:testDebugUnitTest` **458 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**；
+  `adb install -r` **Success**。
+- 未登录状态下的雨课堂探针如实回报：`courses-v2-identity2 401`
+  （`{"errcode":401002,"errmsg":"Cookie has no sessionid"}`）、
+  `mooc-api 403`。**探针没有假装拿到数据**，这点是对的。
+
+### 80.6 ★ 教训（第 5 条）
+
+5. **「换个入口」不等于「修好了」。** `/m/v2` 看起来是移动版就该在手机上打开，
+   但服务端对未登录用户的跳转把它又踢回 PC 页。
+   **验证一个改动要看实际落地页（`domUrl`），不能只看我请求了什么 URL。**
+   这次是 DOM 体检里的 `domUrl` 一眼戳穿的 —— 这个字段价值很高。
+
+---
+
+## §82 ★ 雨课堂课程列表终于对了，但章节树走错路线（2026-11-16）
+
+### 82.1 重大进展：课程列表拿到 50 门
+
+用 `/v2/api/web/courses/list?identity=2` + `/v2/api/web/classroom_archive`：
+
+```
+课程来源：courses-v2-identity2=32 / courses-archive=18 / courses-mooc-legacy=0
+课程数：50
+```
+
+**50 门课全部到位**，其中本学期的（`term=202601`）：
+
+```
+复变函数与数学物理方法(33307885)
+信号与系统 / 量子力学与固体物理 / 数字电路与逻辑设计（一）/ Matlab计算与仿真 /
+电子电路实习 / 马克思主义基本原理 / 形势与政策（二）/ 体育 / 劳动教育 …
+```
+
+对照之前的 2 门 MOOC 课，这次是真的对了。
+`courses-mooc-legacy=0` 也印证了「MOOC 接口和课堂端是两套数据」。
+
+### 82.2 ★ 新问题：42/50 门课章节树回 80019
+
+```
+chapter-*  400  {"msg":"请购买该课程之后再学习","error_code":80019}
+```
+
+**根因：我把「学期标签」当成了 `course_sign`。**
+
+课堂端 `/v2/api/web/courses/list` 的响应里**根本没有 `course_sign`** ——
+那个 `C32F2427949868N` 格式的 sign 只属于 **MOOC 接口**的 `product_list`。
+我在 `parseWebCourses` 里把第三项填成了 `termLabel()` 的结果，拼出来的 URL 是：
+
+```
+.../chapter?cid=33307885&term=latest&sign=2026-2027%2F1%20%E9%99%88%E7%90%A8
+                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 这是"2026-2027/1 陈琨"
+```
+
+服务端当然不认。**只有 8 门课运气好没报 80019 的才通了**（比如 `cid=30547802`
+那门是 MOOC 来源、sign 恰好是教师名也能过）。
+
+### 82.3 正解：课堂端课程走 c27
+
+调研里其实早写了这条 —— **错误码 80019 的处置是「换 c27 接口」**：
+
+```
+GET /c27/online_courseware/schedule/course/progress/?classroom_id={cid}&course_id={cid2}
+```
+
+需要两个参数：
+
+| 参数 | 来源 |
+| --- | --- |
+| `classroom_id` | 课程列表的 `classroom_id`（归档接口是 `id`） |
+| `course_id` | 课程详情 `/v2/api/web/classrooms/{cid}` 的 `data.course_id`（**字符串**） |
+
+课程详情实测返回（`33307885` = 复变函数）：
+
+```json
+{"data":{"id":33307885,"course_id":"4226944",
+ "course_name":"复变函数与数学物理方法","teacher_name":"陈琨","uv_id":2668}}
+```
+
+本轮已改为：**课堂端课程 → 课程详情拿 course_id → c27 进度拿节点**，
+不再对课堂端课程使用 mooc-api 章节树。
+
+### 82.4 本轮改动
+
+| 件 | 改动 |
+| --- | --- |
+| `parseWebCourses` | 明确第三项是**学期标签**，注释写明「绝不能再当 sign 用」 |
+| `probeYuketang` | 课堂端课程改走 `classrooms/{cid}` → `c27 progress` → `logs`；新增 `c27Probed` / `c27WithLeaf` 统计 |
+| `parseC27Leaves` | 新增：c27 响应结构未知，用**递归结构化遍历**找任何带 `leaf_type`/`leafType` 的对象，并兼容 `end_time`/`endTime` 等命名 |
+| `yuketangClassroomDetail` / `yuketangLogsRequest` | 新增两个请求规格 |
+| 摘要 | 增加「c27：探测 N 门 / 拿到节点 M 门」，用来区分「节点没拿到」与「这课真没作业」 |
+| `YuketangClassroomPathTest` | 新增 6 条：课堂端无 `course_sign`、学期标签不能当 sign、详情带 `course_id`、c27 需两个 id、课程来源相加、logs 的 `page=0`/`offset=页大小` |
+
+### 82.5 验证
+
+- `:app:testDebugUnitTest` **464 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**；
+  `adb install -r` **Success**。
+
+### 82.6 ★ 教训（第 6 条）
+
+6. **三元组 / 位置参数的第二、三项最容易张冠李戴。**
+   `Triple<classroom_id, name, XXX>` 里的 `XXX` 我先后当过 `classroom_name`、`course_sign`，
+   每次都是「类型都是 String，编译期毫无提示，运行时才 400」。
+   **位置返回的东西应该具名**（data class），而不是一路 `Triple` 下去。
+
+---
+
+## §83 雨课堂终于拿到作业数据 + c27 空是正常的（2026-11-16）
+
+### 83.1 c27 路线成功
+
+`isstudy` 修正 + c27 接口生效后：
+
+```
+c27：探测 50 门 / 拿到节点 11 门
+节点：102 个 / leaf_type {5=49, 8=53}
+有绝对截止 43 个
+```
+
+**★ 用户澄清了一件我一直误判的事**：
+> 「里面很多课是空的是正常的，因为老师可能什么都没有发。」
+
+所以「39/50 门 c27 返回 `course_progress: []`」**不是 bug**，是老师没发内容。
+`复变函数` 那门课 c27 是空的，但它的作业在**考场派**那边有 14 条 —— 两平台本来就不同步。
+这条纠正很有价值：我原本正准备去"修"这个空数组。
+
+### 83.2 ★ 发现更好的数据源：`logs/learn`
+
+对比两个来源，logs 明显更优：
+
+| | c27 `course_progress` | logs `activities` |
+| --- | --- | --- |
+| 截止时间 | `score_deadline`（毫秒） | **`deadline`（毫秒）** |
+| 类型 | `leaf_type` | **`type`: 5=作业 9=公告 14=课件** |
+| 状态 | `progress.status` | **`status` / `total_score` / `problem_count`** |
+| 覆盖面 | 11/50 门有数据 | **更全** |
+
+实测 121 条 activity：`type=5` 49 条（作业）、`type=14` 53 条（课件）、`type=9` 19 条（公告）。
+**作业只看 type=5**，公告和课件不是待办。
+
+两路都接入后按 `(课程名, 标题)` 去重，避免同一份作业数两次。
+
+### 83.3 ★ `leaf_type` 语义订正：5 是作业，不是考试
+
+真机 49 个 `leaf_type=5` 节点的名字全是：
+
+```
+第16周作业 / 第15周作业 / 小测3 / 练习 / 第九讲作业 / Quiz 7 / Homework_7
+```
+
+而 53 个 `leaf_type=8` 是 `Chapter 8 Counters` 这类**课件**。
+
+之前代码写「5=考试、6=作业」，于是摘要报 `作业 0 个 / 考试 49 个` ——
+**数字对、标签错**，会让人以为"雨课堂没有作业"。
+已改为 5/6 都算作业类，不再硬拆"考试"。
+**★ 这种错标比不显示更危险。**
+
+### 83.4 数据现状（真实的，不好看但准确）
+
+```
+有绝对截止 43 个 / 未过期 2 个
+```
+
+只有 2 条未过期：
+
+| 课程 | 名称 | 截止 |
+| --- | --- | --- |
+| 数字电路与逻辑设计（一） | Homework_7 | 2026-11-17 23:00 |
+| 信号与系统 | 第九讲作业 | 2026-11-22 09:00 |
+
+其余 41 条都是往期（高等数学、数电的 Quiz、上学期的课）。
+**这是账号真实状态，不是抓取不全** —— 加了 `futureDeadline` / `pending` 后一眼可见。
+
+### 83.5 验证
+
+- `:app:testDebugUnitTest` **470 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**；
+  `adb install -r` **Success**。
+
+---
+
+## §84 雨课堂只有一个发布入口：作业/小测/考试靠标题区分（2026-11-16）
+
+### 84.1 用户提供的关键事实
+
+> 「雨课堂上面老师只能发布考试，所以可能没有作业这一项。
+>  所以雨课堂上面的考试包括平时的作业和小测，你可以按照名字之类的区分一下。」
+
+这解释了 §83.3 那个"为什么全是 leaf_type=5"的疑问 ——
+**不是平台把作业标成考试，而是平台只提供了"考试"这一个发布入口**，
+老师发的周作业、小测、期末考，在数据结构上长得一模一样。
+
+所以「类型」这个信息**接口里根本没有，只能从标题命名里读**。
+
+### 84.2 分类规则（基于 49 条真实标题归纳）
+
+| 类别 | 判据关键词 | 真机例子 |
+| --- | --- | --- |
+| **考试** | 考试 / 期末 / 期中 / exam / final | 期中考试、期末考试 |
+| **小测** | 小测 / 测验 / quiz / test | 小测1、Quiz 7、第1、2章小测验、傅里叶级数随堂小测（1） |
+| **考查** | 考查 / 考察 | 劳动教育考查-2025-2026春、国家安全教育考察-25-26秋 |
+| **作业** | 报告 / 作业 / homework / 练习 / 习题 | 第16周作业、Homework_7、第九讲作业 |
+| 兜底 | 无关键词 → **作业** | 练习、积分填空、第五讲傅里叶级数（1） |
+
+★ 两个刻意的设计决定：
+
+1. **实体作业词先判**。「电路实习期末报告提交」同时含「期末」和「报告」，
+   但它是报告作业、不是考试 —— 先匹配"报告"就不会误标。
+2. **兜底归为「作业」而非「考试」**。待办里把作业写成"考试"会吓人；
+   反过来把考试写成作业只是不够醒目。**安全侧在"作业"这边。**
+
+分类结果（真机 49 条）：**作业 35 / 小测 10 / 考查 3 / 考试 1**。
+
+### 84.3 摘要能直接看到待办候选
+
+```
+按标题分类：作业=35 / 小测=10 / 考查=3 / 考试=1
+有绝对截止 43 个 / 未过期 2 个
+待办候选（未过期 2 条）：
+  · [作业] 数字电路与逻辑设计（一） / Homework_7 @11-17 23:00
+  · [作业] 信号与系统 / 第九讲作业 @11-22 09:00
+```
+
+### 84.4 本轮改动
+
+| 件 | 改动 |
+| --- | --- |
+| `classifyYuketangKind` | 新增：按标题分「考试/小测/考查/作业」，实体词优先、兜底归作业 |
+| `parseLogsActivities` | 节点带 `kind` / `status` / `total_score` / `problem_count` |
+| `parseC27Leaves` | 同样带 `kind` |
+| 去重 | 按 `(课程名, 标题)` 去重 c27 与 logs 的重叠 |
+| 统计 | 新增 `kindCounts` / `futureDeadline` / `pendingCount` / `pending`，摘要直出待办候选 |
+| `fmtMs` | 毫秒 → `MM-dd HH:mm`（Asia/Shanghai） |
+| `YuketangLogsTest` | 6 条：只有 type=5 算作业、deadline 是毫秒、三种 type 混合、已交未交、leaf_type=5 是作业、去重键 |
+| `YuketangKindTest` | 8 条：周作业/讲次作业/Quiz/考查/真考试/「期末报告」不算考试/无关键词兜底/同时含两词 |
+
+### 84.5 验证
+
+- `:app:testDebugUnitTest` **478 条 / 0 失败**；`:app:assembleRelease` **BUILD SUCCESSFUL**；
+  `adb install -r` **Success**。
+
+### 84.6 ★ 教训（第 7 条）
+
+7. **用户对自己学校的平台用法比任何文档都准。**
+   「老师只能发布考试」这一句，直接解释了我一直想不通的"为什么全是 type=5"。
+   **遇到"字段值高度单一"时，先问用户平台是怎么用的，别急着猜字段语义。**
+
+---
+
+## §85–89 收尾：写进待办 + 一键抓取 + 自动抓取（2026-11-16）
+
+### 85.1 数据库 v8 → v9：加两列
+
+作业导入需要记住「这条待办来自哪个平台、平台编号是多少」。
+
+```sql
+ALTER TABLE todos ADD COLUMN source     TEXT NOT NULL DEFAULT '';
+ALTER TABLE todos ADD COLUMN externalId TEXT NOT NULL DEFAULT '';
+```
+
+★ 严格照抄 `MIGRATION_7_8` 的规格：
+- **显式 DEFAULT**（少写会让 Room 校验抛异常、启动即崩，0.9.3 那次教训）；
+- **`hasColumn` 幂等**（迁移中途失败但没回滚的设备列可能已存在）；
+- **`ALL_MIGRATIONS` 接上**，两侧测试共用同一组对象；
+- 老数据全落空串 =「用户自己写的」，去重逻辑不会命中它，**行为零变化**。
+
+`app/schemas/.../9.json` 已导出，核对过两个新列是 `TEXT` + `default "''"`，
+与迁移 SQL 逐字一致。
+
+### 85.2 映射与过滤（`ImportRules`，纯函数）
+
+| 规则 | 理由 |
+| --- | --- |
+| 标题拼成 `科目 · 类型 · 原标题` | 雨课堂里「第九讲作业」与「小测1」都是 type=5，不标类型分不清 |
+| 截止 **`00:00` 显示为 `23:59`** | 课堂派 `endtime` 给 `2026-11-19 00:00`，平台语义是「19 号结束」；显示 00:00 会让人以为 18 号夜里截止 |
+| 只导本学期 | 课堂派 7 门课里 6 门是往期、共 80 条作业 |
+| 只导未过期 | 雨课堂 43 条有截止的里 41 条已过期 |
+| 缺科目/标题跳过 | 不写半条脏数据进待办 |
+
+### 85.3 落库（`TodoRepository.importHomework`）
+
+与 `addFromParsed` **分开**，不动被多处调用的老路径。
+
+- **去重**：按 `source + externalId`，已导入的跳过；**绝不覆盖用户手改过的条目**；
+- **不 update 只 insert**：用户改过的标题/时间不会被同步冲掉；
+- **排提醒**：复用 `ReminderScheduler.scheduleBlocking()`（唯一入口）。
+
+### 86.1 预览确认（用户拍板「先弹预览再写入」）
+
+`HomeworkImportPreviewDialog`：列出真的要写入的条目、按截止时间升序、
+显示类型徽章与截止时刻。**预览阶段全程只读**，点取消则待办一个字节都不变。
+
+### 87.1 一键抓取（用户要求）
+
+设置页新增「抓取全部作业」：点一下自动抓**所有已登录平台**，合并成一个预览。
+
+```
+共 4 条待导入
+· 课堂派：2 条
+· 雨课堂：2 条
+```
+
+- 未登录的平台跳过并标注，**绝不弹登录框**（账号密码只能用户自己在官方页输入）；
+- 一个平台失败不影响另一个（各自 `runCatching`）。
+
+### 88.1 ★ 自动抓取：冷启动静默导入
+
+`SyncEngine.autoSyncAndImport()` 挂在 `MainActivity` 冷启动的 `LaunchedEffect` 里。
+
+**四条门槛**（`SyncSettings.shouldAutoSync`）：
+1. 总闸开着；
+2. 同步时机不是「仅手动」；
+3. 距上次自动抓取 ≥ **6 小时**（避免频繁切 App 反复打平台接口）；
+4. 至少一个平台已登录。
+
+**静默导入的安全前提**（四条都已具备）：
+去重保证不堆条目 / 只导未过期 / 只 insert 不 update（不冲掉用户编辑）/ 门槛限制频率。
+
+### 88.2 ★ 真机验证：整条链路跑通
+
+冷启动日志（设备 PKB110，2026-11-16 13:02）：
+
+```
+autoSync start
+collectPreview platform=ketangpai
+  native ... homework POST -> 200 ...        ← 5 门课 × 作业/考试
+collectPreview extracted=86                  ← 抽出 86 条
+collectPreview preview=2                     ← 过滤后 2 条
+collectPreview platform=yuketang
+collectPreview extracted=43
+collectPreview preview=2
+importConfirmed added=2 skipped=2            ← ★ 去重生效
+autoSync done: 新增 2 条，跳过 2 条（已存在）
+```
+
+**`skipped=2` 是关键证据**：用户先前手动导入过 2 条，这次自动抓取正确识别为重复并跳过，
+只新增另外 2 条。**去重逻辑在真实数据上验证成功，不是只在单测里绿。**
+
+### 89 验证
+
+- `:app:testDebugUnitTest` **496 条 / 0 失败**
+  （新增 `ImportRulesTest` 12 条 + `OneClickSyncTest` 7 条）。
+- `:app:assembleRelease` **BUILD SUCCESSFUL**；`adb install -r` **Success**。
+- **数据库迁移已验证不崩**：连续 force-stop + 启动 3 次，每次都拿到新进程，
+  无 `FATAL EXCEPTION` / `Migration didn't properly handle`。
+- `app/build.gradle.kts` 零 diff（临时对齐 37 跑测试，打包前恢复 36）。
+
+### 89.1 当前状态：功能闭环
+
+| 环节 | 状态 |
+| --- | --- |
+| 两平台登录 | ✅ |
+| 接口探路 | ✅ |
+| 字段映射（科目/标题/绝对截止） | ✅ |
+| 数据库加列 + 迁移 | ✅ 真机验证 |
+| 去重 | ✅ 真机验证（skipped=2） |
+| 排提醒 | ✅ 复用现有引擎 |
+| 预览确认 | ✅ |
+| 一键抓取 | ✅ |
+| 冷启动自动抓取 | ✅ 真机验证 |
+
+### 89.2 仍待处理的已知问题
+
+1. **学期过滤没有真正启用**。`collectPreview` 的 `semesterOf` 传的是 `{ null }` =
+   不按学期筛。目前靠「只导未过期」间接过滤掉了往期作业，但若往期作业截止日
+   恰好还没到（比如跨年补交），会被误导入。**要真正修需要一个「课程名 → 学期」
+   映射**：课堂派的学期在 `semesterCourseList` 的响应里，雨课堂在 `courses/list`
+   的 `term` 里，两处都拿得到，只是没接进 `ImportItem`。
+2. **一键抓取没有"全平台同时抓"的并发**：目前是串行（课堂派跑完再跑雨课堂），
+   一次约 40 秒。可以并行，但会同时打两个平台的接口，暂不做。
+3. 雨课堂 `c27` 每门课都打一次，50 门课 = 50 次请求，偏重。可优化为只对
+   `term=本学期` 的课去打。
+4. **正式发版前**要过一遍 `docs/PRIVACY.md`：这个功能会联网读第三方平台的作业数据，
+   隐私政策必须如实描述（哪些数据、存在哪、不联网上传）。
+
+---
+
+## §98 v1.0.15 发版（2026-11-16）
+
+### 98.1 这一版带来了什么
+
+**作业自动导入**：连杆件带功能一起进 1.0.15。雨课堂与课堂派的作业 / 小测 / 考查 / 考试
+会连同「科目 + 标题 + 绝对截止时间」变成待办并排好提醒。
+
+| 能力 | 说明 |
+| --- | --- |
+| 官方页登录 | 账号密码只在平台自己的页面输入，App 不接触 |
+| 一键抓取 | 设置里一个按钮抓全部已登录平台，先预览再写入 |
+| 三种自动触发 | 冷启动 / 回前台 / 后台周期（WorkManager，间隔可选 15 分钟~24 小时） |
+| 新作业通知 | 「老师发布了新的作业，已将作业放进待办！」 |
+| 去重 | 按平台编号；已完成的不会重新出现；不覆盖用户手改 |
+| 学期与过期过滤 | 只导本学期、只导未过期 |
+
+### 98.2 数据库 v8 → v9
+
+`todos` 加 `source` / `externalId` 两列，`TEXT NOT NULL DEFAULT ''`，
+带 `hasColumn` 幂等，老数据全落空串，**行为零变化**。
+真机验证：连续 force-stop + 启动 3 次均无 `Migration didn't properly handle`。
+
+### 98.3 隐私政策同步改了（合规必需）
+
+`docs/PRIVACY.md` 原来写「网络权限仅用于检查更新与下载更新包」——
+v1.0.15 之后这句话**不再成立**。已改：
+
+- 权限表里网络权限的用途补上「读取雨课堂 / 课堂派的作业」
+- 新增「四之二、作业自动导入的网络请求」整节，如实写明：
+  涉及哪两个平台、请求什么、拿到什么、存在哪（仅本机）、明确不做的事（不上传 / 不共享 / 不写作业）
+
+### 98.4 验证
+
+- `:app:testDebugUnitTest` **515 条 / 0 失败**
+- `:app:assembleRelease` **BUILD SUCCESSFUL**，产物 `dist/todo-1.0.15.apk`（2210940 B）
+- 签名 SHA-256 `c0847ef1…2548`，与机上 1.0.14 一致 → 可直接覆盖安装
+- `adb install -r` **Success**，`versionName=1.0.15 / versionCode=49`，启动无崩溃
+- sha256 `e3edad2753fda79bcf9bc11f5439d0579e408add50b8697a0acc4438e65d9c23`
+
+### 98.5 ★ 发版前必须先说的合规风险
+
+AGENTS.md §70.5 记录过、这里再强调一次：
+
+1. **雨课堂《用户协议》明文禁止未经授权访问、抓取、绕过技术限制与账号信息共享。**
+   本功能读的是用户本人已登录后可见的数据，只读、不提交、不上传，
+   但它仍然是一次自动化数据抓取。**上架国内商店存在被拒或下架的风险。**
+2. `release/vivo-store` 仍处于**软著申请冻结期**，且不申请任何网络权限 ——
+   **本功能不得带入该分支**，这是永久功能分叉，不记作欠账。
+3. 若将来要在商店上架含本功能的版本，需单独做合规评估。
+
+### 98.6 分支状态
+
+功能分支 `新增自动导入雨课堂和课堂派作业功能` 领先 main **27+ 提交**。
+是否合并进 main 由 zuige 决定；合入后 main 的公开版将带上此功能与上述风险。

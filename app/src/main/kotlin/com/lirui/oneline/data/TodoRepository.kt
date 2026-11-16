@@ -24,8 +24,77 @@ class TodoRepository(private val context: Context) {
     val active: Flow<List<Todo>> = dao.observeActive()
     val archived: Flow<List<Todo>> = dao.observeArchived()
 
-    suspend fun addFromParsed(parsed: ParsedTodo): Long {
-        val due = parsedToDue(parsed)
+    /**
+     * 某个平台已经导入过的 externalId 集合。
+     *
+     * ★ §96 用途：自动抓取要在导入**之前**记下「库里已有哪些」，
+     *   导入后才能准确判断哪几条是这次新增的（用于发「有新作业」通知）。
+     */
+    suspend fun knownExternalIds(source: String): Set<String> =
+        dao.externalIdsOf(source).toSet()
+
+    /**
+     * ★ §85 作业自动导入：把平台作业写进待办。
+     *
+     * 与 [addFromParsed] 分开，**不动**那条被多处调用的老路径。
+     *
+     * 三条设计约束：
+     * 1. **去重**：已存在同 `source + externalId` 的直接跳过并计入 skipped，
+     *    绝不重复插入，也**绝不覆盖用户手改过的条目**（§70 就定过这条）。
+     * 2. **排提醒**：复用 [ReminderScheduler.scheduleBlocking]（唯一入口），
+     *    否则导入的作业到点不会响，等于白导。
+     * 3. **已过期的**由调用方（[com.lirui.oneline.sync.ImportRules]）先滤掉，
+     *    这里不再判，避免两套口径。
+     *
+     * @return (新建条数, 因重复跳过条数)
+     */
+    suspend fun importHomework(
+        items: List<com.lirui.oneline.sync.ImportRules.ImportItem>
+    ): Pair<Int, Int> {
+        if (items.isEmpty()) return 0 to 0
+        var added = 0
+        var skipped = 0
+        // 同一平台已导入过的编号，一次性取回，避免逐条查库。
+        val known = HashMap<String, MutableSet<String>>()
+        items.forEach { item ->
+            val source = item.platform.id
+            val existing = known.getOrPut(source) {
+                dao.externalIdsOf(source).toMutableSet()
+            }
+            if (item.externalId in existing) {
+                skipped++
+                return@forEach
+            }
+            val title = com.lirui.oneline.sync.ImportRules.todoTitle(
+                item.courseName, item.kind, item.title
+            )
+            // ★ §91：落库前统一归一「00:00 → 前一天 23:59」。
+            //   平台的 00:00 语义是「当天结束」，若原样存零点：
+            //   - 提醒会排在零点（比真实截止晚 1 分钟）；
+            //   - 列表排序会差一天；
+            //   - 用户看到的日期也不是他理解的"19 号截止"。
+            val due = com.lirui.oneline.sync.ImportRules.normalizeDeadline(item.deadlineMillis)
+            val id = dao.insert(
+                Todo(
+                    title = title,
+                    detail = "",
+                    dueAtMillis = due,
+                    hasExactTime = true,
+                    source = source,
+                    externalId = item.externalId
+                )
+            )
+            existing += item.externalId
+            added++
+            // 排提醒：与手动添加同一条路径，精确时刻 + 开始日/结束日都传。
+            ReminderScheduler.scheduleBlocking(
+                context, id, due, true, null, null
+            )
+        }
+        return added to skipped
+    }
+
+    suspend fun addFromParsed(parsed: ParsedTodo): Long {        val due = parsedToDue(parsed)
         val start = parsedToStart(parsed)
         val end = parsedToEnd(parsed)
         val id = dao.insert(Todo(
