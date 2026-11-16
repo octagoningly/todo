@@ -303,8 +303,11 @@ android {
         //   · 首页 FAB 底色改 primary（原 primaryContainer 与卡片 cardBackground 同色，
         //     加号像浮在背景上），配 onPrimary；56dp 尺寸与零 elevation 保持不变。
         //   · 隐私政策主体按 docs/COPYRIGHT.md 定稿订正为「黎锐森 / liruisen200@163.com」。
-        versionCode = 48
-        versionName = "1.0.14"
+        // 1.0.15 = 作业自动导入（雨课堂 / 课堂派）：登录官方页 → 抓取作业/小测/考试
+        //          → 预览确认 → 写进待办并排提醒；一键抓取 + 冷启动/回前台/后台周期自动抓取
+        //          + 新作业通知。DB v8→v9（todos 加 source / externalId）。
+        versionCode = 49
+        versionName = "1.0.15"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
