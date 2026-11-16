@@ -2651,8 +2651,11 @@ private fun HomeworkSyncSection(context: android.content.Context) {
                             HomeworkSyncWorker.ensureScheduled(context)
                         }
                     },
-                    // 仅手动时不需要间隔设置，但仍显示（置灰），避免"选项突然消失"的困惑。
-                    enabled = SyncTrigger.supportsInterval(trigger)
+                    // ★★ 「同步时机」本身**永远可点** —— 它是控制其他项的开关。
+                    //   曾经误在这里写 enabled = supportsInterval(trigger)，
+                    //   结果用户选了「仅手动」→ 本项变灰 → 再也改不回来（死锁 bug）。
+                    //   「谁控制谁」必须分清：模式控制间隔的可用性，不是反过来。
+                    enabled = true
                 )
                 ItemDivider()
                 // ★ §97 后台抓取间隔：只有选「自动」或「只后台抓」时才可点。

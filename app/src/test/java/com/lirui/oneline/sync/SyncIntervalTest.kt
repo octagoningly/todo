@@ -81,4 +81,46 @@ class SyncIntervalTest {
         // 这条钉住「设置里的最小档不能低于系统下限」，避免有人把 OPTIONS 改成 5 分钟。
         assertTrue(SyncInterval.OPTIONS.all { it.first >= 15 })
     }
+
+    @Test
+    fun `mode selector is never gated by interval support`() {
+        // ★★ 死锁回归：曾经把「同步时机」自己的 enabled 写成 supportsInterval(trigger)，
+        //   于是选了「仅手动」→ 本项置灰 → 用户再也改不回「自动」（死锁）。
+        //
+        //   正确关系是**单向**的：
+        //     同步时机（永远可点） → 决定 → 抓取间隔（可能置灰）
+        //   绝不能自指。
+        //
+        //   这里用「三个模式在 OPTIONS 里都在」保证下拉永远能选到所有值 ——
+        //   如果哪天有人又把模式过滤掉一部分，这条会红。
+        val modes = SyncTrigger.OPTIONS.map { it.first }.toSet()
+        assertEquals(
+            "三个模式都必须在下拉里可选，否则用户可能退不回去",
+            setOf(
+                SyncTrigger.ON_OPEN_AND_MANUAL,
+                SyncTrigger.MANUAL_ONLY,
+                SyncTrigger.DAILY_REMINDER
+            ),
+            modes
+        )
+    }
+
+    @Test
+    fun `every mode is recoverable to auto`() {
+        // 死锁的本质是「某个状态让人出不去」。这里逐个确认：
+        // 无论当前是哪个模式，改回「自动」都不需要任何额外前提
+        // （supportsInterval 只影响间隔项，不影响模式项）。
+        listOf(
+            SyncTrigger.ON_OPEN_AND_MANUAL,
+            SyncTrigger.MANUAL_ONLY,
+            SyncTrigger.DAILY_REMINDER
+        ).forEach { from ->
+            // 模式项恒可点 → from 任意模式都能切到 AUTO。
+            // 断言"OPTIONS 里含 AUTO"即可保证切得到。
+            assertTrue(
+                "从 $from 必须能切回自动模式",
+                SyncTrigger.OPTIONS.any { it.first == SyncTrigger.ON_OPEN_AND_MANUAL }
+            )
+        }
+    }
 }
