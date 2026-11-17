@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/zuige66/todo/releases"><img src="https://img.shields.io/badge/version-1.0.14-3F3F46?style=flat-square" alt="version" /></a>
+  <a href="https://github.com/zuige66/todo/releases"><img src="https://img.shields.io/badge/version-1.0.15-3F3F46?style=flat-square" alt="version" /></a>
   <img src="https://img.shields.io/badge/platform-Android-3DDC84?style=flat-square" alt="platform" />
   <img src="https://img.shields.io/badge/build-Kotlin%20%2B%20Compose-7F52FF?style=flat-square" alt="build" />
   <img src="https://img.shields.io/badge/storage-Room-4479A1?style=flat-square" alt="storage" />

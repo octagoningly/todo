@@ -120,7 +120,7 @@
 | `allowBackup` | `false` | `false` |
 | `docs/PRIVACY.md` | 联网版 | 不联网版，**内容不同，别互相覆盖** |
 | 分发 | GitHub Release + 博客直链 | vivo 商店后台 |
-| 版本号 | `1.0.14 / 48`（2026-11-07） | **独立递增**，不与 main 对齐 |
+| 版本号 | `1.0.15 / 49`（2026-11-16，PR #1 作业自动导入） | **独立递增**，不与 main 对齐 |
 
 共同祖先 `e7fb97e`。**边界就是「能否联网更新」与「有没有隐私政策」**，其它功能尽量保持一致。
 
@@ -162,7 +162,7 @@
 | `source/_posts/todo-app.md` | **不止改下载直链**：版本号、功能章节、截图说明一并核对（文章曾停在早期版本：还写「没有日期选择器」，缺专注 / 备份 / 自更新回归） |
 | `docs/COPY.md`（App 仓库） | 「国内镜像」链接同步到同一条带参数的直链 |
 
-部署：`npx hexo generate && npx hexo deploy` 推 `gh-pages`。
+部署：★ **2026-11-12 勘误（以 hexo 仓库 `source/_posts/hexo-customize-guide.md §19.2` 为准）**：日常发版**只 `git push origin main`**，由 `.github/workflows/circle.yml` 自动抓 RSS → `npx hexo generate -d` → 部署 `gh-pages` → 回写数据。**不要本地 `npx hexo deploy`** —— 实测会 `force update` 覆盖 Actions 刚抓的新鲜 `circle.json`，且 Actions 回写的 `[skip ci]` 提交会抢占 `main` 导致下次 push `non-fast-forward`；本地 deploy 只剩「调试产物 / Actions 挂了应急」两个用途，用前先确认没有在跑的 workflow。（原指令 `npx hexo generate && npx hexo deploy` 已失效，保留在此作历史记录。）
 
 - ★ **禁止 `hexo clean`**：删 `public/` 上百文件会触发 WorkBuddy `safe-delete` 批量删除保护（count 50 / threshold 50）直接 FATAL。
 - ★ **Cloudflare**：正常 `max-age=600`，但 **404 会缓存 4 小时**。部署期间别提前探测新 URL；`apkUrl` 与文章直链都加 `?v=<versionCode>` 绕过。文件名由 `ApkInstaller` 从 version 构造、不从 URL 取，所以带查询参数是安全的。
