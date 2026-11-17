@@ -7051,3 +7051,30 @@ AGENTS.md §70.5 记录过、这里再强调一次：
 
 功能分支 `新增自动导入雨课堂和课堂派作业功能` 领先 main **27+ 提交**。
 是否合并进 main 由 zuige 决定；合入后 main 的公开版将带上此功能与上述风险。
+
+> 勘误（2026-11-17，见 §99）：PR #1 已由 zuige 合入 main（`65e648e`），本版已正式对外发布。
+> 98.4 里的包 sha256 `e3edad27…` 是功能分支当时的产物；正式发布包重新构建后为 `0b3338a9…`，
+> 签名指纹同为 `c0847ef1…2548`，以 §99 为准。
+
+---
+
+## §99 v1.0.15 正式发布落地（2026-11-17）
+
+### 99.1 发布决策
+- zuige 拍板两点：① 版本号**直接发 v1.0.15 / 49** —— 虽撞 `AGENTS.md §5`「tag 不复用已装机版本号」红线，但本号是 PR 定的正式号、README / DESIGN / commit 全对齐，且装机验证的就是这个正式包本身，与「临时测试号占位」情形不同；② DESIGN §98.5 的雨课堂合规风险**知情，继续发布**。
+- 远端发布前核查：v1.0.15 的 tag / Release / 博客源实体**都不存在**（tag 只到 v1.0.14、latest.json 停在 1.0.14 / 48）；README 与 §98 里的「已发布」是 PR 合并进来的文字，不是事实。
+
+### 99.2 落地过程
+- `dist/todo-1.0.15.apk` = 本次 `:app:assembleRelease` 产物（2,210,940 B），sha256 `0b3338a9f47e18ef28cbe68a5303134786ea3349f0ff241ad8c4c4adb979e3aa`；签名 SHA-256 `c0847ef1…2548`（apksigner）与 v1.0.14 一致。
+- 文档先提交推送：`a1baa2a docs: v1.0.15 发版对齐`（AGENTS.md / DESIGN.md / README.md），push 后才建 Release（§5 顺序）。
+- **源一 GitHub Release**：id `448778934`，tag `v1.0.15`，draft=false；资产 `todo-1.0.15.apk` 上传成功（2,210,940 B）。`/releases/latest` 复验 `tag=v1.0.15 / draft=false / assets=[todo-1.0.15.apk]`，`git fetch --tags` 拿到本地 tag。
+- **源二 Hexo 兜底源**（独立仓库）：`latest.json` → `versionCode 49 / versionName 1.0.15 / apkUrl …todo-1.0.15.apk?v=49`，changelog 从 §98 与 Release notes 摘；复制 APK；文章 `todo-app.md` 改下载直链、前言（去掉「没有日期选择器」过时说法、补作业导入）、安装前提网络行、新增「八、作业自动导入」章节、已知限制网络表述；`docs/COPY.md` 镜像链接同步。
+- ★ **部署方式勘误**：hexo 仓库 `hexo-customize-guide.md §19.2`（2026-11-12 实测，晚于本文件定稿）规定日常只 `git push origin main` 由 Actions 部署，**不本地 `hexo deploy`**（会 force 覆盖 Actions 刚抓的朋友圈数据）。本次按新规：hexo `b0b8432` push 触发 `Circle Feed Update & Deploy`；`AGENTS.md §5` 已标注此勘误。
+- hexo 工作区有**不属于本次发布**的未提交 `source/js/azure-sea.js`（海景主题 JS），发布前 `git stash push -- <file>` 保护、rebase 到 origin/main 后 `git stash pop` 原样恢复，未进任何提交。
+- App 仓库 `docs/COPY.md` 单独提交 `8156901`，已 push。
+
+### 99.3 验证与遗留
+- 三处 APK（构建产物 / dist / hexo source）sha256 一致 `0b3338a9…`；GitHub 资产 size 与 dist 字节数一致。
+- GitHub Release / tag 已复验通过；博客线上复验见当轮对话（Cloudflare 404 缓存 4h，`apkUrl` 带 `?v=49` 绕缓存）。
+- 合规分支 `release/vivo-store` 全程未触碰（软著冻结），本功能为永久功能分叉。
+- `output/` 与 `show/` 的未提交项按红线未 add、未提交。
